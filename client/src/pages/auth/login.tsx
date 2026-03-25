@@ -14,6 +14,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Lock, User } from "lucide-react";
+import { GitHubVersionLink } from "@/components/GitHubVersionLink";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -37,7 +38,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center flex flex-col items-center gap-2">
           <img src="/Questarr_Logo-nobg.png" alt="Questarr Logo" className="h-16 w-auto mb-2" />
@@ -92,6 +93,9 @@ export default function LoginPage() {
           </Form>
         </CardContent>
       </Card>
+      <div className="mt-4 flex items-center justify-center">
+        <GitHubVersionLink />
+      </div>
     </div>
   );
 }
