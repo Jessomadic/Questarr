@@ -65,6 +65,15 @@ export async function searchAllIndexers(
       torznabClient
         .searchMultipleIndexers(torznabIndexers, searchParams)
         .then((res) => ({ type: "torznab" as const, ...res }))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          searchLogger.error({ error: message }, "torznab client failed");
+          return {
+            type: "torznab" as const,
+            results: { items: [], total: 0, offset: 0 },
+            errors: [message],
+          };
+        })
     );
   }
 
@@ -73,6 +82,15 @@ export async function searchAllIndexers(
       newznabClient
         .searchMultipleIndexers(newznabIndexers, searchParams)
         .then((res) => ({ type: "newznab" as const, ...res }))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          searchLogger.error({ error: message }, "newznab client failed");
+          return {
+            type: "newznab" as const,
+            results: { items: [], total: 0, offset: 0 },
+            errors: [{ indexer: "newznab", error: message }],
+          };
+        })
     );
   }
 

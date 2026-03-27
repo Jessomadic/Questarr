@@ -252,6 +252,14 @@ export class TorznabClient {
       const parsed = this.parser.parse(xmlData);
 
       if (!parsed.rss || !parsed.rss.channel) {
+        // Some indexers return a Torznab <error> element instead of an RSS feed
+        if (parsed.error) {
+          const description =
+            parsed.error["@_description"] ||
+            parsed.error.description ||
+            `Error code ${parsed.error["@_code"] ?? "unknown"}`;
+          throw new Error(description);
+        }
         throw new Error("Invalid Torznab response format");
       }
 
