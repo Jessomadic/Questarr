@@ -210,6 +210,13 @@ const CompactGameCard = ({
               </Badge>
             )}
 
+            {/* Early Access Badge */}
+            {game.earlyAccess && (
+              <Badge className="text-xs h-5 px-1.5 bg-amber-500 border-amber-600 text-white">
+                Early Access
+              </Badge>
+            )}
+
             {/* Hidden Badge */}
             {game.hidden && (
               <Badge
