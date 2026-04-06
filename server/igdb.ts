@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { config } from "./config.js";
 import { igdbLogger } from "./logger.js";
 import { storage } from "./storage.js";
@@ -13,7 +14,7 @@ export const IGDB_EARLY_ACCESS_STATUS = 4;
 
 // Shared field list for all IGDB game queries
 const IGDB_GAME_FIELDS =
-  "name, summary, cover.url, first_release_date, rating, platforms.name, genres.name, screenshots.url, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status";
+  "name, summary, cover.url, first_release_date, rating, aggregated_rating, aggregated_rating_count, platforms.name, genres.name, screenshots.url, websites.url, websites.category, involved_companies.company.name, involved_companies.developer, involved_companies.publisher, status";
 
 export interface IGDBGame {
   id: number;
@@ -25,6 +26,8 @@ export interface IGDBGame {
   };
   first_release_date?: number;
   rating?: number;
+  aggregated_rating?: number;
+  aggregated_rating_count?: number;
   platforms?: Array<{
     id: number;
     name: string;
@@ -35,6 +38,10 @@ export interface IGDBGame {
   }>;
   screenshots?: Array<{
     id: number;
+    url: string;
+  }>;
+  websites?: Array<{
+    category: number;
     url: string;
   }>;
   involved_companies?: Array<{
@@ -50,6 +57,11 @@ interface IGDBAuthResponse {
   expires_in: number;
   token_type: string;
 }
+
+const igdbWebsiteSchema = z.object({
+  category: z.number(),
+  url: z.string().url(),
+});
 
 /**
  * Sanitizes user input for use in IGDB API queries.
@@ -995,6 +1007,13 @@ class IGDBClient {
       screenshots:
         igdbGame.screenshots?.map((s) => `https:${s.url.replace("t_thumb", "t_screenshot_big")}`) ||
         [],
+      igdbWebsites: igdbWebsiteSchema
+        .array()
+        .catch([])
+        .parse(igdbGame.websites ?? []),
+      aggregatedRating: igdbGame.aggregated_rating
+        ? Math.round(igdbGame.aggregated_rating) / 10
+        : undefined,
       // For Discovery games, don't set a status since they're not in collection yet
       status: null,
       isReleased,
