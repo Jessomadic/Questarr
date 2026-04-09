@@ -99,6 +99,13 @@
       "when": 1744130000000,
       "tag": "0013_preferred_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1775762231796,
+      "tag": "0014_sync_snapshot",
+      "breakpoints": true
     }
   ]
 }
