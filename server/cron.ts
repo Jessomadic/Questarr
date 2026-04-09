@@ -702,8 +702,6 @@ export async function checkAutoSearch() {
               continue;
             }
 
-            gamesWithResults++;
-
             // Apply platform filter first (strict), then preferred groups (soft preference)
             const platformFilteredMain = applyPreferredPlatformFilter(
               searchResult.mainItems,
@@ -713,8 +711,14 @@ export async function checkAutoSearch() {
 
             // Handle main items
             if (mainItems.length === 0) {
+              // Results found by indexers but none survive user's filters — clear the flag
+              await storage.updateGameSearchResultsAvailable(game.id, false);
               continue;
             }
+
+            gamesWithResults++;
+            // Always mark as available when filtered results exist
+            await storage.updateGameSearchResultsAvailable(game.id, true);
 
             if (mainItems.length === 1) {
               // Single result found
@@ -774,7 +778,6 @@ export async function checkAutoSearch() {
                   link: `modal:game:${game.id}`,
                 });
                 notifyUser("notification", notification);
-                await storage.updateGameSearchResultsAvailable(game.id, true);
               }
             } else if (mainItems.length > 1 && settings.notifyMultipleDownloads) {
               // Multiple results found, notify user to choose
@@ -786,7 +789,6 @@ export async function checkAutoSearch() {
                 link: `modal:game:${game.id}`,
               });
               notifyUser("notification", notification);
-              await storage.updateGameSearchResultsAvailable(game.id, true);
             }
           } catch (error) {
             igdbLogger.error({ gameTitle: game.title, error }, "Error searching for game");

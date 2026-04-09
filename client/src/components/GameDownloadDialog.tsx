@@ -101,6 +101,7 @@ interface SearchResult {
   items: DownloadItem[];
   total: number;
   offset: number;
+  blacklistedCount?: number;
   errors?: string[];
 }
 
@@ -398,6 +399,9 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
       }
       queryClient.invalidateQueries({ queryKey: ["/api/downloads"] });
       queryClient.invalidateQueries({ queryKey: ["/api/downloads/summary"] });
+      if (game?.id) {
+        queryClient.invalidateQueries({ queryKey: [`/api/games/${game.id}/downloads`] });
+      }
       onOpenChange(false);
     },
     onError: (error: Error) => {
@@ -436,6 +440,9 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
         toast({ title: `Download sent to ${variables.downloaderName}` });
         queryClient.invalidateQueries({ queryKey: ["/api/downloads"] });
         queryClient.invalidateQueries({ queryKey: ["/api/downloads/summary"] });
+        if (game?.id) {
+          queryClient.invalidateQueries({ queryKey: [`/api/games/${game.id}/downloads`] });
+        }
       } else {
         toast({ title: result.message || "Failed to start download", variant: "destructive" });
       }
@@ -837,7 +844,9 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                 <CardHeader>
                   <CardTitle>No Results Found</CardTitle>
                   <CardDescription>
-                    No downloads found for this game. Try configuring indexers in settings.
+                    {searchResults.blacklistedCount
+                      ? `${searchResults.blacklistedCount} release(s) were found but are all blacklisted. Review your blacklist in the game settings.`
+                      : "No downloads found for this game. Try configuring indexers in settings."}
                   </CardDescription>
                 </CardHeader>
               </Card>

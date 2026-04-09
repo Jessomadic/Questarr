@@ -1753,6 +1753,41 @@ describe("API Routes - Extended Coverage", () => {
       expect(storage.getReleaseBlacklistSet).toHaveBeenCalledWith("game-1");
     });
 
+    it("should include blacklistedCount in response when items are blacklisted", async () => {
+      const mockGame = { id: "game-1", userId: "user-1", title: "Test Game" };
+      vi.mocked(storage.getGame).mockResolvedValue(mockGame as any);
+      vi.mocked(storage.getReleaseBlacklistSet).mockResolvedValue(
+        new Set(["Test Game-SKIDROW", "Test Game-PLAZA"])
+      );
+      vi.mocked(searchAllIndexers).mockResolvedValue({
+        items: [
+          {
+            title: "Test Game-SKIDROW",
+            link: "http://example.com/1",
+            downloadType: "torrent" as const,
+          },
+          {
+            title: "Test Game-PLAZA",
+            link: "http://example.com/2",
+            downloadType: "torrent" as const,
+          },
+          {
+            title: "Test Game-CODEX",
+            link: "http://example.com/3",
+            downloadType: "torrent" as const,
+          },
+        ],
+        total: 3,
+        errors: [],
+      });
+
+      const response = await request(app).get("/api/search?query=Test+Game&gameId=game-1");
+
+      expect(response.status).toBe(200);
+      expect(response.body.items).toHaveLength(1);
+      expect(response.body.blacklistedCount).toBe(2);
+    });
+
     it("should not filter when game belongs to another user", async () => {
       vi.mocked(storage.getGame).mockResolvedValue({
         id: "game-1",

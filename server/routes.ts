@@ -133,11 +133,13 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
     // Filter out blacklisted releases when a gameId context is provided
     const gameId = req.query.gameId as string | undefined;
     let filteredItems = items;
+    let blacklistedCount = 0;
     if (gameId && req.user) {
       const game = await storage.getGame(gameId);
       if (game && game.userId === req.user.id) {
         const blacklisted = await storage.getReleaseBlacklistSet(gameId);
         filteredItems = filterBlacklistedReleases(items, blacklisted);
+        blacklistedCount = items.length - filteredItems.length;
       }
     }
 
@@ -145,6 +147,7 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       items: filteredItems,
       total,
       offset,
+      ...(blacklistedCount > 0 ? { blacklistedCount } : {}),
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
