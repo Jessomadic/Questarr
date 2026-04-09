@@ -1788,7 +1788,10 @@ describe("API Routes - Extended Coverage", () => {
         );
         const response = await request(app).get("/api/settings/discord");
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ configured: true });
+        expect(response.body).toMatchObject({
+          configured: true,
+          webhookUrl: "https://discord.com/api/webhooks/123/abc",
+        });
       });
 
       it("should return configured: false when webhook URL is empty", async () => {

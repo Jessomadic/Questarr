@@ -2441,7 +2441,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/settings/discord", async (req, res) => {
     try {
       const webhookUrl = await storage.getSystemConfig("discord.webhookUrl");
-      res.json({ configured: !!(webhookUrl && webhookUrl.length > 0) });
+      res.json({
+        configured: !!(webhookUrl && webhookUrl.length > 0),
+        webhookUrl: webhookUrl || undefined,
+      });
     } catch (error) {
       routesLogger.error({ error }, "Failed to fetch Discord settings");
       res.status(500).json({ error: "Failed to fetch Discord settings" });

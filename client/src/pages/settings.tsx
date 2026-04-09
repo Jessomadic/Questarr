@@ -209,10 +209,17 @@ export default function SettingsPage() {
     },
   });
 
-  const { data: discordSettings } = useQuery<{ configured: boolean }>({
+  const { data: discordSettings } = useQuery<{ configured: boolean; webhookUrl?: string }>({
     queryKey: ["/api/settings/discord"],
     queryFn: () => apiRequest("GET", "/api/settings/discord").then((r) => r.json()),
   });
+
+  // Populate Discord webhook input with the stored URL when it loads
+  useEffect(() => {
+    if (discordSettings?.webhookUrl) {
+      setDiscordWebhookUrl(discordSettings.webhookUrl);
+    }
+  }, [discordSettings?.webhookUrl]);
 
   const { data: nexusmodsSettings } = useQuery<{
     configured: boolean;
@@ -229,7 +236,6 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings/discord"] });
-      setDiscordWebhookUrl("");
       toast({ title: "Discord webhook saved" });
     },
     onError: () => {
