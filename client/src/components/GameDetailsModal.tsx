@@ -444,7 +444,15 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
       ? `${game.summary?.slice(0, SUMMARY_LIMIT)}...`
       : game.summary;
 
-  const igdbWebsites = (game.igdbWebsites ?? []) as Array<{ category: number; url: string }>;
+  // Include Steam link derived from steamAppId if IGDB didn't provide one (category 13)
+  const rawWebsites = (game.igdbWebsites ?? []) as Array<{ category: number; url: string }>;
+  const igdbWebsites =
+    game.steamAppId && !rawWebsites.some((w) => w.category === 13)
+      ? [
+          ...rawWebsites,
+          { category: 13, url: `https://store.steampowered.com/app/${game.steamAppId}` },
+        ]
+      : rawWebsites;
 
   const derivedLinks = getDerivedLinks(game, hltbData?.url, pcgwData?.url);
   // Optimistic display: show pending value immediately while the mutation is in flight.
@@ -471,6 +479,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                 </DialogDescription>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={game.status} />
+                  {game.earlyAccess && (
+                    <Badge className="text-xs bg-amber-500 border-amber-600 text-white">
+                      Early Access
+                    </Badge>
+                  )}
                   {game.rating ? (
                     <div className="flex items-center gap-1 text-sm">
                       <Star className="w-4 h-4 text-accent" />
