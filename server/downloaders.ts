@@ -950,35 +950,6 @@ export class RTorrentClient implements DownloaderClient {
       // must not have the category appended — that would cause double-nesting like /path/cat/cat.
       const downloadPath = request.downloadPath || this.downloader.downloadPath;
 
-      // Apply category and download-directory settings after a torrent is registered
-      const applySettings = async (infoHash: string) => {
-        if (infoHash === "unknown") return;
-        if (category) {
-          try {
-            await this.makeXMLRPCRequest("d.custom1.set", [infoHash, category]);
-          } catch (error) {
-            downloadersLogger.warn(
-              { error, hash: infoHash, category },
-              "Failed to set category on download"
-            );
-          }
-        }
-        if (downloadPath) {
-          try {
-            await this.makeXMLRPCRequest("d.directory.set", [infoHash, downloadPath]);
-            downloadersLogger.debug(
-              { hash: infoHash, path: downloadPath },
-              "Set download directory"
-            );
-          } catch (error) {
-            downloadersLogger.warn(
-              { error, hash: infoHash, path: downloadPath },
-              "Failed to set download directory"
-            );
-          }
-        }
-      };
-
       // Add a magnet link directly via load.start / load.normal
       const addMagnetLink = async (
         magnetUri: string
@@ -989,9 +960,12 @@ export class RTorrentClient implements DownloaderClient {
           { method: addMethod, hash: infoHash },
           "Adding magnet link to rTorrent"
         );
-        const result = await this.makeXMLRPCRequest(addMethod, ["", magnetUri]);
+        // Pass directory and category as inline commands so they are applied atomically
+        const commands: string[] = [];
+        if (category) commands.push(`d.custom1.set=${category}`);
+        if (downloadPath) commands.push(`d.directory.set=${downloadPath}`);
+        const result = await this.makeXMLRPCRequest(addMethod, ["", magnetUri, ...commands]);
         if (result === 0) {
-          await applySettings(infoHash);
           return {
             success: true,
             id: infoHash,
@@ -1061,10 +1035,13 @@ export class RTorrentClient implements DownloaderClient {
         "Uploading raw file to rTorrent"
       );
 
-      const result = await this.makeXMLRPCRequest(addMethod, ["", buffer]);
+      // Pass directory and category as inline commands so they are applied atomically
+      const rawCommands: string[] = [];
+      if (category) rawCommands.push(`d.custom1.set=${category}`);
+      if (downloadPath) rawCommands.push(`d.directory.set=${downloadPath}`);
+      const result = await this.makeXMLRPCRequest(addMethod, ["", buffer, ...rawCommands]);
 
       if (result === 0) {
-        await applySettings(infoHash);
         return {
           success: true,
           id: infoHash,
@@ -3436,8 +3413,11 @@ export class SABnzbdClient implements DownloaderClient {
       return { success: false, message: `Unsafe URL blocked: ${request.url}` };
     }
 
+    // Strip &file= parameter that some indexers append (causes fetch failures on some indexers)
+    const nzbUrl = request.url.includes("&file=") ? request.url.split("&file=")[0] : request.url;
+
     const url = this.getApiUrl("addurl", {
-      name: request.url,
+      name: nzbUrl,
       nzbname: request.title,
       cat: request.category || "games",
       priority: (request.priority || 0).toString(),
@@ -4044,7 +4024,9 @@ export class NZBGetClient implements DownloaderClient {
         return { success: false, message: `Unsafe URL blocked: ${request.url}` };
       }
 
-      const nzbResponse = await safeFetch(request.url);
+      // Strip &file= parameter that some indexers append (causes fetch failures on some indexers)
+      const nzbUrl = request.url.includes("&file=") ? request.url.split("&file=")[0] : request.url;
+      const nzbResponse = await safeFetch(nzbUrl);
       if (!nzbResponse.ok) {
         return { success: false, message: `Failed to fetch NZB: ${nzbResponse.statusText}` };
       }

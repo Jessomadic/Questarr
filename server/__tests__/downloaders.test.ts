@@ -310,21 +310,7 @@ describe("RTorrentClient", () => {
         arrayBuffer: async () => new ArrayBuffer(10),
       });
 
-      // Mock for load.raw_start (add torrent)
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        text: async () =>
-          `<?xml version="1.0"?><methodResponse><params><param><value><int>0</int></value></param></params></methodResponse>`,
-      });
-
-      // Mock for d.custom1.set (set category)
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        text: async () =>
-          `<?xml version="1.0"?><methodResponse><params><param><value><int>0</int></value></param></params></methodResponse>`,
-      });
-
-      // Mock for d.directory.set (set download path)
+      // Mock for load.raw_start (add torrent with inline commands)
       fetchMock.mockResolvedValueOnce({
         ok: true,
         text: async () =>
@@ -344,14 +330,16 @@ describe("RTorrentClient", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(fetchMock.mock.calls.length).toBe(4); // download + add + set category + set path
+      // Inline commands: only 2 fetch calls (torrent download + load.raw_start)
+      expect(fetchMock.mock.calls.length).toBe(2);
 
       // rTorrent handles categories natively via d.custom1.set — the path must NOT
       // have the category appended (that would cause double-nesting /path/cat/cat).
-      const directorySetCall = fetchMock.mock.calls[3][1].body;
-      expect(directorySetCall).toContain("d.directory.set");
-      expect(directorySetCall).toContain("/downloads</string>");
-      expect(directorySetCall).not.toContain("/downloads/games");
+      // Both commands are passed inline to load.raw_start.
+      const addTorrentBody = fetchMock.mock.calls[1][1].body;
+      expect(addTorrentBody).toContain("d.custom1.set=games");
+      expect(addTorrentBody).toContain("d.directory.set=/downloads");
+      expect(addTorrentBody).not.toContain("/downloads/games");
     });
 
     it("should add download with downloadPath only (no category)", async () => {
@@ -361,14 +349,7 @@ describe("RTorrentClient", () => {
         arrayBuffer: async () => new ArrayBuffer(10),
       });
 
-      // Mock for load.raw_start (add torrent)
-      fetchMock.mockResolvedValueOnce({
-        ok: true,
-        text: async () =>
-          `<?xml version="1.0"?><methodResponse><params><param><value><int>0</int></value></param></params></methodResponse>`,
-      });
-
-      // Mock for d.directory.set (set download path)
+      // Mock for load.raw_start (add torrent with inline directory command)
       fetchMock.mockResolvedValueOnce({
         ok: true,
         text: async () =>
@@ -382,12 +363,13 @@ describe("RTorrentClient", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(fetchMock.mock.calls.length).toBe(3); // download + add + set path
+      // Inline commands: only 2 fetch calls (torrent download + load.raw_start)
+      expect(fetchMock.mock.calls.length).toBe(2);
 
-      // Verify d.directory.set was called with /downloads (no category append)
-      const directorySetCall = fetchMock.mock.calls[2][1].body;
-      expect(directorySetCall).toContain("d.directory.set");
-      expect(directorySetCall).toContain("/downloads</string>");
+      // Verify d.directory.set is inline in load.raw_start (no separate call)
+      const addTorrentBody = fetchMock.mock.calls[1][1].body;
+      expect(addTorrentBody).toContain("d.directory.set=/downloads");
+      expect(addTorrentBody).not.toContain("d.custom1.set");
     });
 
     it("should handle directory.set failure gracefully", async () => {
@@ -397,17 +379,11 @@ describe("RTorrentClient", () => {
         arrayBuffer: async () => new ArrayBuffer(10),
       });
 
-      // Mock for load.raw_start (add torrent)
+      // Mock for load.raw_start (add torrent) — returns success even with inline directory command
       fetchMock.mockResolvedValueOnce({
         ok: true,
         text: async () =>
           `<?xml version="1.0"?><methodResponse><params><param><value><int>0</int></value></param></params></methodResponse>`,
-      });
-
-      // Mock for d.directory.set (fail)
-      fetchMock.mockResolvedValueOnce({
-        ok: false,
-        text: async () => "Error",
       });
 
       const result = await client.addDownload({
@@ -416,7 +392,7 @@ describe("RTorrentClient", () => {
         downloadPath: "/invalid/path",
       });
 
-      // Should still succeed even if directory.set fails
+      // Should succeed — the inline command is part of the atomic load.raw_start call
       expect(result.success).toBe(true);
       expect(result.message).toContain("Download added successfully");
     });
