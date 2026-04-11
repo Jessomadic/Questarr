@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import PageToolbar from "./PageToolbar";
 import GameGrid from "./GameGrid";
+import AddGameModal from "./AddGameModal";
 import {
   Bookmark,
   CheckCircle2,
@@ -10,6 +11,7 @@ import {
   Filter,
   LayoutGrid,
   Library,
+  Plus,
   Settings2,
   X,
 } from "lucide-react";
@@ -35,6 +37,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useViewControls } from "@/hooks/use-view-controls";
 import { useLocalStorageState } from "@/hooks/use-local-storage-state";
+import { setAddGamePendingQuery, clearAddGamePendingQuery } from "@/lib/add-game-store";
 
 export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -130,6 +133,13 @@ export default function Dashboard() {
   }, [statusFilter, genreFilter, platformFilter]);
 
   const libStats = useMemo(() => calculateLibraryStats(games), [games]);
+
+  // Sync dashboard search query to the add-game store so the Header's AddGameModal
+  // can pre-fill when opened while the user has typed something here.
+  useEffect(() => {
+    setAddGamePendingQuery(searchQuery);
+    return () => clearAddGamePendingQuery();
+  }, [searchQuery]);
 
   const handleStatusChange = useCallback(
     (gameId: string, newStatus: GameStatus) => {
@@ -372,16 +382,33 @@ export default function Dashboard() {
           </Card>
         )}
 
-        <GameGrid
-          games={filteredGames}
-          onStatusChange={handleStatusChange}
-          onToggleHidden={handleToggleHidden}
-          isLoading={isLoading}
-          isFetching={isFetching}
-          columns={gridColumns}
-          viewMode={viewMode}
-          density={listDensity}
-        />
+        {filteredGames.length === 0 && debouncedSearchQuery.trim() ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <p className="text-lg font-medium mb-1">
+              No results for &ldquo;{debouncedSearchQuery}&rdquo;
+            </p>
+            <p className="text-sm text-muted-foreground mb-6">
+              This game isn&apos;t in your library yet.
+            </p>
+            <AddGameModal initialQuery={searchQuery}>
+              <Button size="lg" className="gap-2" data-testid="button-add-game-from-search">
+                <Plus className="w-4 h-4" />
+                Add &ldquo;{debouncedSearchQuery}&rdquo; to collection
+              </Button>
+            </AddGameModal>
+          </div>
+        ) : (
+          <GameGrid
+            games={filteredGames}
+            onStatusChange={handleStatusChange}
+            onToggleHidden={handleToggleHidden}
+            isLoading={isLoading}
+            isFetching={isFetching}
+            columns={gridColumns}
+            viewMode={viewMode}
+            density={listDensity}
+          />
+        )}
       </div>
     </div>
   );

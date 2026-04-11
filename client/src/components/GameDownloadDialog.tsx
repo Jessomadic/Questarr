@@ -231,6 +231,16 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     enabled: open,
   });
 
+  const torrentCompatibleDownloaders = useMemo(
+    () => downloaders.filter((d) => ["transmission", "rtorrent", "qbittorrent"].includes(d.type)),
+    [downloaders]
+  );
+
+  const usenetCompatibleDownloaders = useMemo(
+    () => downloaders.filter((d) => ["sabnzbd", "nzbget"].includes(d.type)),
+    [downloaders]
+  );
+
   // Categorize downloads
   const categorizedDownloads = useMemo(() => {
     if (!searchResults?.items) return { main: [], update: [], dlc: [], extra: [] };
@@ -931,6 +941,9 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                           const pubDate = new Date(download.pubDate);
                           const hoursOld = (Date.now() - pubDate.getTime()) / (1000 * 60 * 60);
                           const isNew = hoursOld <= 24;
+                          const compatibleDownloaders = isUsenet
+                            ? usenetCompatibleDownloaders
+                            : torrentCompatibleDownloaders;
 
                           return (
                             <div
@@ -1135,48 +1148,32 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                           Copy {isUsenet ? "NZB" : "Torrent"} Link
                                         </DropdownMenuItem>
 
-                                        {(() => {
-                                          const compatibleDownloaders = downloaders.filter((d) =>
-                                            isUsenet
-                                              ? ["sabnzbd", "nzbget"].includes(d.type)
-                                              : [
-                                                  "transmission",
-                                                  "rtorrent",
-                                                  "qbittorrent",
-                                                ].includes(d.type)
-                                          );
-
-                                          if (compatibleDownloaders.length <= 1) {
-                                            return null;
-                                          }
-
-                                          return (
-                                            <DropdownMenuSub>
-                                              <DropdownMenuSubTrigger>
-                                                <Download className="h-4 w-4 mr-2" />
-                                                Send to downloader
-                                              </DropdownMenuSubTrigger>
-                                              <DropdownMenuPortal>
-                                                <DropdownMenuSubContent>
-                                                  {compatibleDownloaders.map((d) => (
-                                                    <DropdownMenuItem
-                                                      key={d.id}
-                                                      onClick={() =>
-                                                        sendToDownloaderMutation.mutate({
-                                                          download,
-                                                          downloaderId: d.id,
-                                                          downloaderName: d.name,
-                                                        })
-                                                      }
-                                                    >
-                                                      {d.name}
-                                                    </DropdownMenuItem>
-                                                  ))}
-                                                </DropdownMenuSubContent>
-                                              </DropdownMenuPortal>
-                                            </DropdownMenuSub>
-                                          );
-                                        })()}
+                                        {compatibleDownloaders.length > 1 && (
+                                          <DropdownMenuSub>
+                                            <DropdownMenuSubTrigger>
+                                              <Download className="h-4 w-4 mr-2" />
+                                              Send to downloader
+                                            </DropdownMenuSubTrigger>
+                                            <DropdownMenuPortal>
+                                              <DropdownMenuSubContent>
+                                                {compatibleDownloaders.map((d) => (
+                                                  <DropdownMenuItem
+                                                    key={d.id}
+                                                    onClick={() =>
+                                                      sendToDownloaderMutation.mutate({
+                                                        download,
+                                                        downloaderId: d.id,
+                                                        downloaderName: d.name,
+                                                      })
+                                                    }
+                                                  >
+                                                    {d.name}
+                                                  </DropdownMenuItem>
+                                                ))}
+                                              </DropdownMenuSubContent>
+                                            </DropdownMenuPortal>
+                                          </DropdownMenuSub>
+                                        )}
                                         <DropdownMenuItem
                                           onClick={() => blacklistMutation.mutate(download)}
                                           disabled={blacklistMutation.isPending}

@@ -18,6 +18,7 @@ import { type Game, type InsertGame, type Config } from "@shared/schema";
 import { mapGameToInsertGame } from "@/lib/utils";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import { getAddGamePendingQuery, clearAddGamePendingQuery } from "@/lib/add-game-store";
 
 interface SearchResult extends Game {
   inCollection?: boolean;
@@ -25,9 +26,10 @@ interface SearchResult extends Game {
 
 interface AddGameModalProps {
   children: React.ReactNode;
+  initialQuery?: string;
 }
 
-export default function AddGameModal({ children }: AddGameModalProps) {
+export default function AddGameModal({ children, initialQuery }: AddGameModalProps) {
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -46,6 +48,22 @@ export default function AddGameModal({ children }: AddGameModalProps) {
     }, 500);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Pre-fill search when modal opens (from prop or from the dashboard store)
+  useEffect(() => {
+    if (open) {
+      const fromStore = getAddGamePendingQuery();
+      const queryToUse = initialQuery ?? (fromStore || "");
+      if (queryToUse) {
+        setSearchQuery(queryToUse);
+        setDebouncedQuery(queryToUse);
+        clearAddGamePendingQuery();
+      }
+    } else {
+      setSearchQuery("");
+      setDebouncedQuery("");
+    }
+  }, [open, initialQuery]);
 
   // Search IGDB for games
   const { data: searchResults = [], isLoading: isSearching } = useQuery({
