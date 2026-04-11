@@ -49,7 +49,13 @@ import { config as appConfig } from "./config.js";
 import { configLoader } from "./config-loader.js";
 import { prowlarrClient } from "./prowlarr.js";
 import { isSafeUrl, safeFetch } from "./ssrf.js";
-import { hashPassword, comparePassword, generateToken, authenticateToken } from "./auth.js";
+import {
+  hashPassword,
+  comparePassword,
+  generateToken,
+  authenticateToken,
+  optionalAuthenticateToken,
+} from "./auth.js";
 import { hltbClient } from "./hltb.js";
 import { nexusmodsClient } from "./nexusmods.js";
 import multer from "multer";
@@ -68,7 +74,13 @@ const upload = multer({
 });
 import { searchAllIndexers, filterBlacklistedReleases } from "./search.js";
 import { xrelClient, DEFAULT_XREL_BASE, ALLOWED_XREL_DOMAINS } from "./xrel.js";
-import { normalizeTitle, cleanReleaseName, releaseMatchesGame } from "../shared/title-utils.js";
+import {
+  normalizeTitle,
+  cleanReleaseName,
+  releaseMatchesGame,
+  parseReleaseMetadata,
+  matchesPlatformFilter,
+} from "../shared/title-utils.js";
 import { categorizeDownload } from "../shared/download-categorizer.js";
 import archiver from "archiver";
 import helmet from "helmet";
@@ -140,9 +152,29 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
     if (gameId && req.user) {
       const game = await storage.getGame(gameId);
       if (game && game.userId === req.user.id) {
-        const blacklisted = await storage.getReleaseBlacklistSet(gameId);
+        const [blacklisted, userSettings] = await Promise.all([
+          storage.getReleaseBlacklistSet(gameId),
+          storage.getUserSettings(req.user.id),
+        ]);
         filteredItems = filterBlacklistedReleases(items, blacklisted);
         blacklistedCount = items.length - filteredItems.length;
+
+        // Update the "has results" flag only for canonical game-title searches so that
+        // partial/custom user-typed queries in the download dialog don't flip the badge
+        // based on a transient, narrow result set. Runs async to avoid blocking the response.
+        const isCanonicalSearch = normalizeTitle(query.trim()) === normalizeTitle(game.title);
+        if (isCanonicalSearch) {
+          const preferredPlatform = userSettings?.preferredPlatform ?? null;
+          const platformFiltered = preferredPlatform
+            ? filteredItems.filter((item) => {
+                const { platform } = parseReleaseMetadata(item.title);
+                return matchesPlatformFilter(platform, preferredPlatform);
+              })
+            : filteredItems;
+          storage
+            .updateGameSearchResultsAvailable(game.id, platformFiltered.length > 0)
+            .catch((err) => routesLogger.warn({ err }, "Failed to update searchResultsAvailable"));
+        }
       }
     }
 
@@ -1498,6 +1530,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Aggregated search across all enabled indexers
   app.get(
     "/api/indexers/search",
+    optionalAuthenticateToken,
     sanitizeIndexerSearchQuery,
     validateRequest,
     handleAggregatedIndexerSearch
@@ -1752,6 +1785,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Search for games using configured indexers (alias for /api/indexers/search)
   app.get(
     "/api/search",
+    optionalAuthenticateToken,
     sanitizeIndexerSearchQuery,
     validateRequest,
     handleAggregatedIndexerSearch
