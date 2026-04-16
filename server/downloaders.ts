@@ -300,9 +300,8 @@ export class TransmissionClient implements DownloaderClient {
       const isMagnet = request.url.startsWith("magnet:");
 
       if (isMagnet) {
-        if (!(await isSafeUrl(request.url))) {
-          return { success: false, message: `Unsafe URL blocked: ${request.url}` };
-        }
+        // Magnet URIs have no hostname — isSafeUrl would always fail on them.
+        // The BitTorrent client handles tracker URL validation internally.
         args.filename = request.url;
       } else {
         // Check URL safety before attempting download or fallback

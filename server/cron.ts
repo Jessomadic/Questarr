@@ -544,8 +544,22 @@ export async function checkDownloadStatus() {
             }
 
             // Update game status
+            // If we're about to reset to "wanted" (error case), check whether any
+            // sibling download for the same game is still actively downloading.
+            // If so, leave the game status as-is to avoid a false regression.
+            let skipGameStatusUpdate = false;
+            if (newGameStatus === "wanted") {
+              const siblings = await storage.getDownloadsByGameId(download.gameId);
+              const hasActiveDownload = siblings.some(
+                (s) => s.id !== download.id && s.status === "downloading"
+              );
+              if (hasActiveDownload) {
+                skipGameStatusUpdate = true;
+              }
+            }
+
             const game = await storage.getGame(download.gameId);
-            if (game && game.status !== newGameStatus) {
+            if (!skipGameStatusUpdate && game && game.status !== newGameStatus) {
               await storage.updateGameStatus(download.gameId, { status: newGameStatus });
               igdbLogger.debug(
                 { gameId: download.gameId, oldStatus: game.status, newStatus: newGameStatus },
@@ -887,7 +901,7 @@ export async function checkXrelReleases() {
       const dirNorm = normalizeTitle(dirCleaned);
       const extRegex =
         extTitleNorm && extTitleNorm.length >= 5
-          ? new RegExp(`\\b${extTitleNorm.replace(/[.*+?^${}()|[\\]/g, "\\$&")}\\b`, "i")
+          ? new RegExp(`\\b${extTitleNorm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i")
           : null;
       return {
         rel,

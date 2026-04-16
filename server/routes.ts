@@ -2371,7 +2371,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ? "paused"
               : "downloading";
 
-      let resolvedGameId: string;
+      let resolvedGameId: string | undefined = undefined;
 
       if (gameId) {
         const existing = await storage.getGame(gameId);
@@ -2410,7 +2410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        if (!resolvedGameId!) {
+        if (!resolvedGameId) {
           // Determine initial game status
           const initialGameStatus =
             category === "main"
@@ -2437,7 +2437,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.addGameDownload(
         insertGameDownloadSchema.parse({
-          gameId: resolvedGameId,
+          gameId: resolvedGameId!,
           downloaderId,
           downloadHash: downloadHash.toLowerCase(),
           downloadTitle,
@@ -2606,7 +2606,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/notifications", authenticateToken, async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
-      const notifications = await storage.getNotifications(limit);
+      const notifications = await storage.getNotifications(req.user!.id, limit);
       res.json(notifications);
     } catch (error) {
       routesLogger.error({ error }, "error fetching notifications");
@@ -2616,7 +2616,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/notifications/unread-count", authenticateToken, async (req, res) => {
     try {
-      const count = await storage.getUnreadNotificationsCount();
+      const count = await storage.getUnreadNotificationsCount(req.user!.id);
       res.json({ count });
     } catch (error) {
       routesLogger.error({ error }, "error fetching unread count");
@@ -2662,7 +2662,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/notifications/read-all", authenticateToken, async (req, res) => {
     try {
-      await storage.markAllNotificationsAsRead();
+      await storage.markAllNotificationsAsRead(req.user!.id);
       res.json({ success: true });
     } catch (error) {
       routesLogger.error({ error }, "error marking all notifications as read");
@@ -2672,7 +2672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/notifications", authenticateToken, async (req, res) => {
     try {
-      await storage.clearAllNotifications();
+      await storage.deleteReadNotifications(req.user!.id);
       res.status(204).send();
     } catch (error) {
       routesLogger.error({ error }, "error clearing notifications");

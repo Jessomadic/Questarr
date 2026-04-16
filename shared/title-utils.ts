@@ -44,14 +44,23 @@ export function cleanReleaseName(releaseName: string): string {
   cleaned = cleaned.replace(/-[a-zA-Z0-9]+$/, "");
 
   // 2. Handle content in brackets or parentheses that often contains metadata
-  cleaned = cleaned.replace(/[[({][^\])}]*[\])}]/g, (match) => {
-    // If the bracketed content contains known tags or is mostly numeric (like a build ID), remove it
+  // Three separate regexes ensure only matched bracket pairs are consumed (e.g. `(foo]` is not matched).
+  const bracketCallback = (match: string) => {
     const inner = match.slice(1, -1).toLowerCase();
-    const hasTag = RELEASE_TAGS.some((tag) => tag.test(inner)) || VERSION_REGEX.test(inner);
+    // Reset lastIndex before each .test() — g-flag regexes are stateful and lastIndex
+    // advances after a match, causing intermittent misses on reuse.
+    const hasTag =
+      RELEASE_TAGS.some((tag) => {
+        tag.lastIndex = 0;
+        return tag.test(inner);
+      }) || VERSION_REGEX.test(inner);
     const isNumeric = /^\d+$/.test(inner.replace(/\s/g, ""));
     if (hasTag || isNumeric) return " ";
     return match; // Keep it if it might be part of the title (e.g. "Game (Special Edition)")
-  });
+  };
+  cleaned = cleaned.replace(/\([^)]*\)/g, bracketCallback);
+  cleaned = cleaned.replace(/\[[^\]]*\]/g, bracketCallback);
+  cleaned = cleaned.replace(/\{[^}]*\}/g, bracketCallback);
 
   // 3. Remove version patterns explicitly
   cleaned = cleaned.replace(VERSION_REGEX, " ");

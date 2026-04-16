@@ -128,12 +128,13 @@ export interface IStorage {
   getTrackedDownloadKeys(): Promise<Set<string>>;
 
   // Notification methods
-  getNotifications(limit?: number): Promise<Notification[]>;
-  getUnreadNotificationsCount(): Promise<number>;
+  getNotifications(userId: string, limit?: number): Promise<Notification[]>;
+  getUnreadNotificationsCount(userId: string): Promise<number>;
   addNotification(notification: InsertNotification): Promise<Notification>;
   addNotificationsBatch(notifications: InsertNotification[]): Promise<Notification[]>;
   markNotificationAsRead(id: string): Promise<Notification | undefined>;
-  markAllNotificationsAsRead(): Promise<void>;
+  markAllNotificationsAsRead(userId: string): Promise<void>;
+  deleteReadNotifications(userId: string): Promise<void>;
   // RSS Feed methods
   getAllRssFeeds(): Promise<RssFeed[]>;
   getRssFeed(id: string): Promise<RssFeed | undefined>;
@@ -730,14 +731,16 @@ export class MemStorage implements IStorage {
   }
 
   // Notification methods
-  async getNotifications(limit: number = 50): Promise<Notification[]> {
+  async getNotifications(userId: string, limit: number = 50): Promise<Notification[]> {
     return Array.from(this.notifications.values())
+      .filter((n) => n.userId === userId)
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
       .slice(0, limit);
   }
 
-  async getUnreadNotificationsCount(): Promise<number> {
-    return Array.from(this.notifications.values()).filter((n) => !n.read).length;
+  async getUnreadNotificationsCount(userId: string): Promise<number> {
+    return Array.from(this.notifications.values()).filter((n) => n.userId === userId && !n.read)
+      .length;
   }
 
   async addNotification(insertNotification: InsertNotification): Promise<Notification> {
@@ -776,10 +779,18 @@ export class MemStorage implements IStorage {
     return updatedNotification;
   }
 
-  async markAllNotificationsAsRead(): Promise<void> {
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
     Array.from(this.notifications.entries()).forEach(([id, notification]) => {
-      if (!notification.read) {
+      if (notification.userId === userId && !notification.read) {
         this.notifications.set(id, { ...notification, read: true });
+      }
+    });
+  }
+
+  async deleteReadNotifications(userId: string): Promise<void> {
+    Array.from(this.notifications.entries()).forEach(([id, notification]) => {
+      if (notification.userId === userId && notification.read) {
+        this.notifications.delete(id);
       }
     });
   }
@@ -1579,15 +1590,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Notification methods
-  async getNotifications(limit: number = 50): Promise<Notification[]> {
-    return db.select().from(notifications).orderBy(desc(notifications.createdAt)).limit(limit);
+  async getNotifications(userId: string, limit: number = 50): Promise<Notification[]> {
+    return db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
   }
 
-  async getUnreadNotificationsCount(): Promise<number> {
+  async getUnreadNotificationsCount(userId: string): Promise<number> {
     const [result] = await db
       .select({ count: sql<number>`count(*)` })
       .from(notifications)
-      .where(eq(notifications.read, false));
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false)));
     return result.count;
   }
 
@@ -1618,8 +1634,17 @@ export class DatabaseStorage implements IStorage {
     return updatedNotification || undefined;
   }
 
-  async markAllNotificationsAsRead(): Promise<void> {
-    await db.update(notifications).set({ read: true }).where(eq(notifications.read, false));
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    await db
+      .update(notifications)
+      .set({ read: true })
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false)));
+  }
+
+  async deleteReadNotifications(userId: string): Promise<void> {
+    await db
+      .delete(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, true)));
   }
 
   async clearAllNotifications(): Promise<void> {
