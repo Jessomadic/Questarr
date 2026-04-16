@@ -657,7 +657,7 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
                 <div className="space-y-5 pr-4 pb-2">
                   {/* Summary */}
                   {game.summary && (
-                    <div className="overflow-hidden">
+                    <div>
                       <h3 className="font-semibold mb-2 flex items-center gap-2">
                         <Gamepad2 className="w-4 h-4" />
                         About
