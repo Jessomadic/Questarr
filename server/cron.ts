@@ -831,6 +831,7 @@ export async function checkAutoSearch() {
               settings.downloadRules
             );
             if (!searchResult) {
+              await storage.updateGameSearchResultsAvailable(game.id, false);
               continue;
             }
 
@@ -839,6 +840,8 @@ export async function checkAutoSearch() {
               preferredPlatform
             );
             const updateItems = applyPreferredGroupsFilter(platformFilteredUpdate, preferredGroups);
+
+            await storage.updateGameSearchResultsAvailable(game.id, updateItems.length > 0);
 
             if (updateItems.length > 0 && settings.notifyUpdates) {
               const notification = await storage.addNotification({
