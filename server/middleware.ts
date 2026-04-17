@@ -60,9 +60,14 @@ export const generalApiLimiter = rateLimit({
 export const validateRequest = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    const details = errors.array();
+    expressLogger.warn(
+      { path: req.path, method: req.method, validationErrors: details },
+      "Validation failed"
+    );
     return res.status(400).json({
       error: "Validation failed",
-      details: errors.array(),
+      details,
     });
   }
   next();
@@ -121,7 +126,11 @@ export const sanitizeGameData = [
     .trim()
     .isLength({ min: 1, max: 500 })
     .withMessage("Title must be between 1 and 500 characters"),
-  body("igdbId").optional().isInt({ min: 1 }).withMessage("Invalid IGDB ID").toInt(),
+  body("igdbId")
+    .optional({ nullable: true })
+    .isInt({ min: 1 })
+    .withMessage("Invalid IGDB ID")
+    .toInt(),
   body("summary")
     .optional()
     .trim()
@@ -134,7 +143,7 @@ export const sanitizeGameData = [
     .matches(/^\d{4}-\d{2}-\d{2}$/)
     .withMessage("Invalid date format, use YYYY-MM-DD"),
   body("rating")
-    .optional()
+    .optional({ nullable: true })
     .isFloat({ min: 0, max: 10 })
     .withMessage("Rating must be between 0 and 10")
     .toFloat(),
