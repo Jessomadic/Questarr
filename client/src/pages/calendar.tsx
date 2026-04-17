@@ -94,12 +94,27 @@ export default function CalendarPage() {
     enabled: !!config?.igdb.configured,
   });
 
-  // Filter wanted games with release dates
+  // Games with year-only release dates use YYYY-12-31 as a placeholder
+  const isYearOnlyDate = (releaseDate: string) => releaseDate.endsWith("-12-31");
+
+  // Filter wanted games with a known specific release date
   const wantedGames = useMemo(() => {
     return games.filter(
       (g) =>
         g.status === "wanted" &&
         g.releaseDate &&
+        !isYearOnlyDate(g.releaseDate) &&
+        (!searchQuery || g.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+  }, [games, searchQuery]);
+
+  // Games with only a year-level release date (IGDB placeholder: YYYY-12-31)
+  const undatedGames = useMemo(() => {
+    return games.filter(
+      (g) =>
+        g.status === "wanted" &&
+        g.releaseDate &&
+        isYearOnlyDate(g.releaseDate) &&
         (!searchQuery || g.title.toLowerCase().includes(searchQuery.toLowerCase()))
     );
   }, [games, searchQuery]);
@@ -219,34 +234,47 @@ export default function CalendarPage() {
 
       {isLoading ? (
         <div className="text-center py-12 text-muted-foreground">Loading calendar...</div>
-      ) : wantedGames.length === 0 ? (
+      ) : wantedGames.length === 0 && undatedGames.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           No games in your wishlist. Add games to track their release dates.
         </div>
       ) : (
-        <>
+        <div className="space-y-6">
+          {wantedGames.length > 0 && (
+            <>
+              {viewMode === "year" && (
+                <YearView
+                  currentDate={currentDate}
+                  gamesByDate={gamesByDate}
+                  onGameClick={handleGameClick}
+                />
+              )}
+              {viewMode === "month" && (
+                <MonthView
+                  currentDate={currentDate}
+                  gamesByDate={gamesByDate}
+                  onGameClick={handleGameClick}
+                />
+              )}
+              {viewMode === "week" && (
+                <WeekView
+                  currentDate={currentDate}
+                  gamesByDate={gamesByDate}
+                  onGameClick={handleGameClick}
+                />
+              )}
+            </>
+          )}
           {viewMode === "year" && (
-            <YearView
-              currentDate={currentDate}
-              gamesByDate={gamesByDate}
+            <UndatedSection
+              year={currentDate.getFullYear()}
+              games={undatedGames.filter(
+                (g) => new Date(g.releaseDate!).getFullYear() === currentDate.getFullYear()
+              )}
               onGameClick={handleGameClick}
             />
           )}
-          {viewMode === "month" && (
-            <MonthView
-              currentDate={currentDate}
-              gamesByDate={gamesByDate}
-              onGameClick={handleGameClick}
-            />
-          )}
-          {viewMode === "week" && (
-            <WeekView
-              currentDate={currentDate}
-              gamesByDate={gamesByDate}
-              onGameClick={handleGameClick}
-            />
-          )}
-        </>
+        </div>
       )}
 
       <GameDownloadDialog
@@ -429,13 +457,44 @@ function WeekView({
   );
 }
 
+function UndatedSection({
+  year,
+  games,
+  onGameClick,
+}: {
+  year: number;
+  games: Game[];
+  onGameClick: (game: Game) => void;
+}) {
+  if (games.length === 0) return null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-3">
+        <h2 className="text-base font-semibold text-muted-foreground">No Release Date — {year}</h2>
+        <Badge variant="secondary" className="text-xs">
+          {games.length}
+        </Badge>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+        {games.map((game) => (
+          <GameBadge key={game.id} game={game} hideDate onClick={() => onGameClick(game)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function GameBadge({
   game,
   compact = false,
+  hideDate = false,
   onClick,
 }: {
   game: Game;
   compact?: boolean;
+  hideDate?: boolean;
   onClick?: () => void;
 }) {
   const isDelayed = game.releaseStatus === "delayed";
@@ -523,20 +582,33 @@ function GameBadge({
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {game.releaseDate &&
-                new Date(game.releaseDate).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-            </p>
+            {!hideDate && (
+              <p className="text-xs text-muted-foreground">
+                {game.releaseDate &&
+                  new Date(game.releaseDate).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+              </p>
+            )}
           </div>
         </button>
       </TooltipTrigger>
       <TooltipContent>
         <div className="max-w-xs">
           <p className="font-semibold">{game.title}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {hideDate
+              ? "Release date TBD"
+              : game.releaseDate
+                ? new Date(game.releaseDate).toLocaleDateString(undefined, {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null}
+          </p>
           {isDelayed && (
             <div className="flex flex-col gap-0.5 mt-1">
               <Badge variant="destructive" className="w-fit text-xs h-4">
