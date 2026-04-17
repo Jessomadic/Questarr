@@ -63,7 +63,7 @@ export default function PageToolbar({
           <div className="relative flex-1 min-w-[160px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
-              type="search"
+              type="text"
               value={search ?? ""}
               onChange={(e) => onSearchChange?.(e.target.value)}
               placeholder={searchPlaceholder}
