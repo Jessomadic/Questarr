@@ -75,7 +75,7 @@ export default function PageToolbar({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 hover:bg-transparent"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 hover:bg-transparent no-default-hover-elevate no-default-active-elevate"
                 onClick={() => onSearchChange?.("")}
                 aria-label="Clear search"
               >
