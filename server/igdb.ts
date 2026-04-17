@@ -96,6 +96,10 @@ function sanitizeIgdbInput(input: string): string {
     .slice(0, 100); // Limit length to prevent abuse
 }
 
+// Retry configuration for rate-limited requests
+const MAX_RETRY_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_MS = 1000;
+
 // Constants for query thresholds
 const MIN_RATING_THRESHOLD = 60;
 const MIN_RATING_COUNT = 3;
@@ -220,30 +224,47 @@ class IGDBClient {
 
     this.lastRequestTime = Date.now();
 
-    const response = await fetch(`https://api.igdb.com/v4/${endpoint}`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Client-ID": clientId!,
-        Authorization: `Bearer ${token}`,
-      },
-      body: query,
-    });
+    let attempt = 0;
+    while (true) {
+      const response = await fetch(`https://api.igdb.com/v4/${endpoint}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Client-ID": clientId!,
+          Authorization: `Bearer ${token}`,
+        },
+        body: query,
+      });
 
-    if (!response.ok) {
-      throw new Error(`IGDB API error: ${response.status}`);
+      if (response.status === 429 && attempt < MAX_RETRY_ATTEMPTS) {
+        const retryAfterHeader = response.headers.get("Retry-After");
+        const delay = retryAfterHeader
+          ? parseInt(retryAfterHeader, 10) * 1000
+          : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        igdbLogger.warn(
+          { endpoint, attempt: attempt + 1, delayMs: delay },
+          "IGDB rate limited (429), retrying after delay"
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        attempt++;
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`IGDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // ⚡ Bolt: If a TTL is specified, store the response in the cache.
+      if (ttl > 0) {
+        const expiry = Date.now() + ttl;
+        this.cache.set(cacheKey, { data, expiry });
+        igdbLogger.debug({ cacheKey, ttl }, "cached response");
+      }
+
+      return data as T;
     }
-
-    const data = await response.json();
-
-    // ⚡ Bolt: If a TTL is specified, store the response in the cache.
-    if (ttl > 0) {
-      const expiry = Date.now() + ttl;
-      this.cache.set(cacheKey, { data, expiry });
-      igdbLogger.debug({ cacheKey, ttl }, "cached response");
-    }
-
-    return data as T;
   }
 
   // IGDB API returns dynamic JSON structures
