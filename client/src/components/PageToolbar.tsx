@@ -60,7 +60,7 @@ export default function PageToolbar({
       {/* Left: search input + filter pills */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         {hasSearch && (
-          <div className="relative flex-1 min-w-[160px]">
+          <div className="relative flex-1 min-w-[160px] h-8 self-center">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
               type="text"

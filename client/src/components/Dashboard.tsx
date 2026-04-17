@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import PageToolbar from "./PageToolbar";
@@ -134,6 +134,13 @@ export default function Dashboard() {
   }, [statusFilter, genreFilter, platformFilter]);
 
   const libStats = useMemo(() => calculateLibraryStats(games), [games]);
+
+  // Keep the last known non-empty stats so the header line doesn't vanish
+  // when a search returns zero results.
+  const stableLibStatsRef = useRef(libStats);
+  if (libStats.totalGames > 0) stableLibStatsRef.current = libStats;
+  const stableLibStats = stableLibStatsRef.current;
+
   const filtersActive = filteredGames.length < games.length;
 
   // Sync dashboard search query to the add-game store so the Header's AddGameModal
@@ -169,19 +176,19 @@ export default function Dashboard() {
         {/* Page header */}
         <div>
           <h1 className="text-2xl font-bold tracking-tight">My Library</h1>
-          {libStats.totalGames > 0 && (
+          {stableLibStats.totalGames > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-sm text-muted-foreground">
               <span>
                 <span className="font-medium text-foreground">
-                  {filtersActive ? filteredGames.length : libStats.totalGames}
+                  {filtersActive ? filteredGames.length : stableLibStats.totalGames}
                 </span>{" "}
-                {filtersActive ? `of ${libStats.totalGames} games shown` : "games"}
+                {filtersActive ? `of ${stableLibStats.totalGames} games shown` : "games"}
               </span>
               <span className="opacity-30">·</span>
               <span className="flex items-center gap-1">
                 <Bookmark className="h-3 w-3" />
                 <span className="font-medium text-foreground">
-                  {libStats.statusBreakdown.wanted}
+                  {stableLibStats.statusBreakdown.wanted}
                 </span>{" "}
                 wanted
               </span>
@@ -189,7 +196,7 @@ export default function Dashboard() {
               <span className="flex items-center gap-1">
                 <Library className="h-3 w-3" />
                 <span className="font-medium text-foreground">
-                  {libStats.statusBreakdown.owned}
+                  {stableLibStats.statusBreakdown.owned}
                 </span>{" "}
                 owned
               </span>
@@ -197,17 +204,17 @@ export default function Dashboard() {
               <span className="flex items-center gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 <span className="font-medium text-foreground">
-                  {libStats.statusBreakdown.completed}
+                  {stableLibStats.statusBreakdown.completed}
                 </span>{" "}
                 completed
               </span>
-              {libStats.avgRating !== "N/A" && (
+              {stableLibStats.avgRating !== "N/A" && (
                 <>
                   <span className="opacity-30">·</span>
                   <span>
                     avg.{" "}
                     <span className="font-medium text-foreground">
-                      <span aria-hidden="true">⭐</span> {libStats.avgRating}
+                      <span aria-hidden="true">⭐</span> {stableLibStats.avgRating}
                     </span>
                   </span>
                 </>
