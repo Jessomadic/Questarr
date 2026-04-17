@@ -161,6 +161,12 @@ vi.mock("../logger.js", () => ({
     error: vi.fn(),
     child: vi.fn().mockReturnThis(),
   },
+  expressLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  },
   downloadersLogger: {
     info: vi.fn(),
     error: vi.fn(),
