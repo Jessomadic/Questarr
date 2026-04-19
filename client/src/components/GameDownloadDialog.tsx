@@ -1008,7 +1008,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                   <div className="flex items-center gap-4">
                                     {/* Left Side: Title and Metadata */}
                                     <div className="flex-1 min-w-0 space-y-1">
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 min-w-0">
                                         <Tooltip>
                                           <TooltipTrigger asChild>
                                             <div
@@ -1029,7 +1029,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                           </TooltipContent>
                                         </Tooltip>
 
-                                        <h4 className="font-bold text-base truncate leading-tight">
+                                        <h4 className="font-bold text-base leading-tight break-words">
                                           {download.title}
                                         </h4>
 
