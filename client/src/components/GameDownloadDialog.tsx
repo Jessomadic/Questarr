@@ -1029,7 +1029,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                           </TooltipContent>
                                         </Tooltip>
 
-                                        <h4 className="font-bold text-base leading-tight break-words">
+                                        <h4 className="font-bold text-base leading-tight break-words min-w-0">
                                           {download.title}
                                         </h4>
 
