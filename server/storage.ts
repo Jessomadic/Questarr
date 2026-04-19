@@ -79,10 +79,8 @@ export interface IStorage {
   getGameByIgdbId(igdbId: number): Promise<Game | undefined>;
   getUserGames(userId: string, includeHidden?: boolean, statuses?: string[]): Promise<Game[]>;
   getAllGames(): Promise<Game[]>; // Keep for admin/debug or global search? Or maybe deprecated.
-  getGamesByStatus(status: string): Promise<Game[]>; // Should be user scoped too
   getUserGamesByStatus(userId: string, status: string, includeHidden?: boolean): Promise<Game[]>;
   searchUserGames(userId: string, query: string, includeHidden?: boolean): Promise<Game[]>;
-  searchGames(query: string): Promise<Game[]>; // Deprecated?
   addGame(game: InsertGame): Promise<Game>;
   updateGameStatus(id: string, statusUpdate: UpdateGameStatus): Promise<Game | undefined>;
   updateGameHidden(id: string, hidden: boolean): Promise<Game | undefined>;
@@ -287,12 +285,6 @@ export class MemStorage implements IStorage {
     );
   }
 
-  async getGamesByStatus(status: string): Promise<Game[]> {
-    return Array.from(this.games.values())
-      .filter((game) => game.status === status)
-      .sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime());
-  }
-
   async getUserGamesByStatus(
     userId: string,
     status: string,
@@ -302,18 +294,6 @@ export class MemStorage implements IStorage {
       .filter(
         (game) =>
           game.userId === userId && game.status === status && (includeHidden || !game.hidden)
-      )
-      .sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime());
-  }
-
-  async searchGames(query: string): Promise<Game[]> {
-    const lowercaseQuery = query.toLowerCase();
-    return Array.from(this.games.values())
-      .filter(
-        (game) =>
-          game.title.toLowerCase().includes(lowercaseQuery) ||
-          game.genres?.some((genre) => genre.toLowerCase().includes(lowercaseQuery)) ||
-          game.platforms?.some((platform) => platform.toLowerCase().includes(lowercaseQuery))
       )
       .sort((a, b) => new Date(b.addedAt || 0).getTime() - new Date(a.addedAt || 0).getTime());
   }
@@ -795,10 +775,6 @@ export class MemStorage implements IStorage {
     });
   }
 
-  async clearAllNotifications(): Promise<void> {
-    this.notifications.clear();
-  }
-
   // RSS Feed methods
   async getAllRssFeeds(): Promise<RssFeed[]> {
     return Array.from(this.rssFeeds.values());
@@ -1128,17 +1104,6 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`${games.addedAt} DESC`);
   }
 
-  async getGamesByStatus(status: string): Promise<Game[]> {
-    return (
-      db
-        .select()
-        .from(games)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .where(eq(games.status, status as any))
-        .orderBy(sql`${games.addedAt} DESC`)
-    );
-  }
-
   async getUserGamesByStatus(
     userId: string,
     status: string,
@@ -1153,23 +1118,6 @@ export class DatabaseStorage implements IStorage {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           eq(games.status, status as any),
           includeHidden ? undefined : eq(games.hidden, false)
-        )
-      )
-      .orderBy(sql`${games.addedAt} DESC`);
-  }
-
-  async searchGames(query: string): Promise<Game[]> {
-    const searchTerm = `%${query.toLowerCase()}%`;
-    return db
-      .select()
-      .from(games)
-      .where(
-        or(
-          like(sql`lower(${games.title})`, searchTerm),
-          // SQLite JSON array search workaround or explicit JSON handling
-          // Using LIKE for simple array search since platforms/genres are JSON arrays of strings
-          like(sql`lower(${games.genres})`, searchTerm),
-          like(sql`lower(${games.platforms})`, searchTerm)
         )
       )
       .orderBy(sql`${games.addedAt} DESC`);
@@ -1645,10 +1593,6 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(notifications)
       .where(and(eq(notifications.userId, userId), eq(notifications.read, true)));
-  }
-
-  async clearAllNotifications(): Promise<void> {
-    await db.delete(notifications);
   }
 
   // RSS Feed methods

@@ -70,7 +70,6 @@ vi.mock("../storage.js", async (importOriginal) => {
       addNotification: vi.fn(),
       markNotificationAsRead: vi.fn(),
       markAllNotificationsAsRead: vi.fn(),
-      clearAllNotifications: vi.fn(),
       syncIndexers: vi.fn().mockResolvedValue({ added: 0, updated: 0 }),
       addGameDownload: vi.fn(),
       getDownloadingGameDownloads: vi.fn().mockResolvedValue([]),

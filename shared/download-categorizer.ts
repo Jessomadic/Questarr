@@ -109,19 +109,3 @@ export function getCategoryLabel(category: DownloadCategory): string {
       return "Extras";
   }
 }
-
-/**
- * Gets a description for a category
- */
-export function getCategoryDescription(category: DownloadCategory): string {
-  switch (category) {
-    case "main":
-      return "Full game downloads";
-    case "update":
-      return "Game updates, patches, hotfixes, and crackfixes";
-    case "dlc":
-      return "Downloadable content, expansions, and season passes";
-    case "extra":
-      return "Soundtracks, artbooks, and other bonus content";
-  }
-}

@@ -76,30 +76,6 @@ export function formatETA(seconds: number): string {
 }
 
 /**
- * Get CSS class for status color
- */
-export function getStatusColor(status: DownloadStatusType): string {
-  switch (status) {
-    case "downloading":
-      return "bg-blue-500";
-    case "seeding":
-      return "bg-green-500";
-    case "completed":
-      return "bg-green-600";
-    case "paused":
-      return "bg-yellow-500";
-    case "error":
-      return "bg-red-500";
-    case "repairing":
-      return "bg-orange-500";
-    case "unpacking":
-      return "bg-purple-500";
-    default:
-      return "bg-gray-500";
-  }
-}
-
-/**
  * Get badge variant for status
  */
 export function getStatusBadgeVariant(
@@ -183,25 +159,6 @@ export function getDownloadTypeColor(type?: DownloadType): string {
     return "bg-amber-600 dark:bg-amber-500 text-white border-amber-700 dark:border-amber-400";
   }
   return "bg-violet-600 dark:bg-violet-500 text-white border-violet-700 dark:border-violet-400";
-}
-
-/**
- * Get badge variant for download type
- */
-export function getDownloadTypeBadgeVariant(type?: DownloadType): "default" | "secondary" {
-  // Use custom colors via className instead of variants where possible,
-  // but keep this for backward compatibility if needed.
-  return type === "usenet" ? "secondary" : "default";
-}
-
-/**
- * Get color for download type text
- */
-export function getDownloadTypeTextExColor(type?: DownloadType): string {
-  if (type === "usenet") {
-    return "text-amber-600 dark:text-amber-400";
-  }
-  return "text-violet-600 dark:text-violet-400";
 }
 
 /**

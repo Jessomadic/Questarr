@@ -3,7 +3,6 @@ import {
   categorizeDownload,
   groupDownloadsByCategory,
   getCategoryLabel,
-  getCategoryDescription,
 } from "../download-categorizer.js";
 
 describe("download-categorizer", () => {
@@ -172,21 +171,6 @@ describe("download-categorizer", () => {
       expect(getCategoryLabel("update")).toBe("Updates & Patches");
       expect(getCategoryLabel("dlc")).toBe("DLC & Expansions");
       expect(getCategoryLabel("extra")).toBe("Extras");
-    });
-  });
-
-  describe("getCategoryDescription", () => {
-    it("returns correct description for each category", () => {
-      expect(getCategoryDescription("main")).toBe("Full game downloads");
-      expect(getCategoryDescription("update")).toBe(
-        "Game updates, patches, hotfixes, and crackfixes"
-      );
-      expect(getCategoryDescription("dlc")).toBe(
-        "Downloadable content, expansions, and season passes"
-      );
-      expect(getCategoryDescription("extra")).toBe(
-        "Soundtracks, artbooks, and other bonus content"
-      );
     });
   });
 });
