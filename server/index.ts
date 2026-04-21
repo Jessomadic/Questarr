@@ -206,10 +206,13 @@ app.use((req, res, next) => {
                 return next();
               }
               if (!req.secure) {
-                const host = req.hostname || "localhost";
-                // Use req.path (Express-normalized, no host component) to prevent
-                // open redirect via user-controlled req.url (e.g. //evil.com/path).
-                return res.redirect(`https://${host}:${ssl.port}${req.path}`);
+                // Validate hostname to prevent open redirect via a crafted Host header.
+                // req.path is already Express-normalized (no host component).
+                const rawHostname = req.hostname;
+                const safeHostname = /^[a-zA-Z0-9.\-[\]]+$/.test(rawHostname)
+                  ? rawHostname
+                  : "localhost";
+                return res.redirect(`https://${safeHostname}:${ssl.port}${req.path}`);
               }
               next();
             });

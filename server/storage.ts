@@ -130,7 +130,7 @@ export interface IStorage {
   getUnreadNotificationsCount(userId: string): Promise<number>;
   addNotification(notification: InsertNotification): Promise<Notification>;
   addNotificationsBatch(notifications: InsertNotification[]): Promise<Notification[]>;
-  markNotificationAsRead(id: string): Promise<Notification | undefined>;
+  markNotificationAsRead(id: string, userId: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
   deleteReadNotifications(userId: string): Promise<void>;
   // RSS Feed methods
@@ -747,9 +747,9 @@ export class MemStorage implements IStorage {
     return result;
   }
 
-  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+  async markNotificationAsRead(id: string, userId: string): Promise<Notification | undefined> {
     const notification = this.notifications.get(id);
-    if (!notification) return undefined;
+    if (!notification || notification.userId !== userId) return undefined;
 
     const updatedNotification: Notification = {
       ...notification,
@@ -1573,11 +1573,11 @@ export class DatabaseStorage implements IStorage {
     return db.insert(notifications).values(values).returning();
   }
 
-  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+  async markNotificationAsRead(id: string, userId: string): Promise<Notification | undefined> {
     const [updatedNotification] = await db
       .update(notifications)
       .set({ read: true })
-      .where(eq(notifications.id, id))
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
       .returning();
     return updatedNotification || undefined;
   }

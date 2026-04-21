@@ -2626,7 +2626,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/notifications", authenticateToken, validateRequest, async (req, res) => {
     try {
-      const notificationData = insertNotificationSchema.parse(req.body);
+      const notificationData = insertNotificationSchema.parse({
+        ...req.body,
+        userId: req.user!.id,
+      });
       const notification = await storage.addNotification(notificationData);
 
       // Notify via WebSocket
@@ -2649,7 +2652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/notifications/:id/read", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      const notification = await storage.markNotificationAsRead(id);
+      const notification = await storage.markNotificationAsRead(id, req.user!.id);
       if (!notification) {
         return res.status(404).json({ error: "Notification not found" });
       }

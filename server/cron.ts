@@ -334,6 +334,7 @@ export async function checkGameUpdates() {
         title: "Game Released",
         message,
         link: "/library",
+        userId: game.userId!,
       });
     }
 
@@ -364,6 +365,7 @@ export async function checkGameUpdates() {
           title: "Game Delayed",
           message,
           link: "/wishlist",
+          userId: game.userId!,
         });
       }
     }
