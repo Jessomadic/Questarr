@@ -155,6 +155,7 @@ export default function Dashboard() {
       clearAddGamePendingQuery();
     };
   }, []);
+  }, []);
 
   const handleStatusChange = useCallback(
     (gameId: string, newStatus: GameStatus) => {
