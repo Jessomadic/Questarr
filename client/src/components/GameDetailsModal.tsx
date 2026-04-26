@@ -823,7 +823,11 @@ export default function GameDetailsModal({ game, open, onOpenChange }: GameDetai
             </TabsContent>
 
             {/* ── Downloads tab ── */}
-            <TabsContent value="downloads" className="flex-1 min-h-0">
+            <TabsContent
+              value="downloads"
+              forceMount
+              className="flex-1 min-h-0 data-[state=inactive]:hidden"
+            >
               <ScrollArea className="h-full">
                 <div className="space-y-3 pr-4 pb-2">
                   {downloadsLoading ? (

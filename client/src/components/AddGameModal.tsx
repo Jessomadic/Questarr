@@ -82,7 +82,7 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
       if (!response.ok) throw new Error("Search failed");
       return response.json();
     },
-    enabled: debouncedQuery.trim().length > 2 && !!config?.igdb.configured,
+    enabled: debouncedQuery.trim().length > 2 && !!config?.igdb?.configured,
     placeholderData: keepPreviousData,
   });
 
@@ -148,7 +148,7 @@ export default function AddGameModal({ children, initialQuery }: AddGameModalPro
           <DialogDescription>Search for games to add to your collection</DialogDescription>
         </DialogHeader>
 
-        {config && !config.igdb.configured ? (
+        {config && !config.igdb?.configured ? (
           <div className="flex flex-col items-center justify-center py-8 text-center space-y-4">
             <div className="bg-muted p-4 rounded-full">
               <AlertCircle className="h-8 w-8 text-muted-foreground" />
