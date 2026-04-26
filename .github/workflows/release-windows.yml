@@ -1,0 +1,199 @@
+name: Build Windows Installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: "Upload installer to the latest release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.2.0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Get version and Node.js runtime version
+        id: meta
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $nodeVersion = (node --version).TrimStart('v')
+          "NODE_VERSION=$nodeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "App version: $version  |  Node version: $nodeVersion"
+
+      # ── Bundle the Express server into a single ESM file ──────────────────────
+      # better-sqlite3 (native .node binary) cannot be bundled — kept external.
+      # vite is a dynamic import guarded by isDev=false at runtime — kept external
+      # so it is never loaded in production even though the import() call exists.
+      - name: Bundle server with esbuild
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "installer_staging\app\dist\server" | Out-Null
+          npx esbuild dist/server/index.js `
+            --bundle `
+            --platform=node `
+            --target=node22 `
+            --format=esm `
+            --outfile=installer_staging/app/dist/server/index.mjs `
+            --external:better-sqlite3 `
+            --external:bufferutil `
+            --external:vite `
+            --log-level=warning
+
+      - name: Stage app assets
+        shell: pwsh
+        run: |
+          # Client SPA — serveStatic() resolves to dist/public/ relative to dist/server/
+          Copy-Item "dist\public" "installer_staging\app\dist\public" -Recurse -Force
+
+          # Database migrations — ensureDatabase() resolves from process.cwd()/migrations
+          Copy-Item "migrations" "installer_staging\app\migrations" -Recurse -Force
+
+          # package.json — required so Node treats the directory as an ES module package
+          Copy-Item "package.json" "installer_staging\app\package.json"
+
+          # Native modules: only these need to be shipped alongside the esbuild bundle.
+          # better-sqlite3 is the primary native module; its runtime binding resolution
+          # uses node-gyp-build (v9+) or bindings (older) to locate the .node file.
+          # bufferutil is an optional socket.io performance addon — absent is fine.
+          New-Item -ItemType Directory -Force -Path "installer_staging\app\node_modules" | Out-Null
+
+          $nativeDeps = @(
+            "better-sqlite3",   # SQLite driver — required
+            "node-gyp-build",   # better-sqlite3 runtime binding loader (v9+)
+            "bindings",         # fallback binding loader (older versions)
+            "file-uri-to-path", # dep of bindings
+            "bufferutil",       # optional socket.io perf addon
+            "utf-8-validate"    # optional socket.io perf addon
+          )
+
+          foreach ($dep in $nativeDeps) {
+            if (Test-Path "node_modules\$dep") {
+              Copy-Item "node_modules\$dep" "installer_staging\app\node_modules\$dep" -Recurse -Force
+              Write-Host "Staged native dep: $dep"
+            }
+          }
+
+          # Verify the .node binary was actually included
+          $nodeBindings = Get-ChildItem "installer_staging\app\node_modules" -Recurse -Filter "*.node"
+          if ($nodeBindings.Count -eq 0) {
+            Write-Error "No .node native binaries found in staged node_modules — build will fail at runtime"
+            exit 1
+          }
+          Write-Host "Native binaries staged: $($nodeBindings.FullName -join ', ')"
+
+      # ── Download Node.js LTS Windows x64 to bundle with the installer ─────────
+      # Bundles the exact same Node.js version used to build the app so there are
+      # no ABI mismatches with the native better-sqlite3 binding.
+      - name: Download Node.js runtime (Windows x64)
+        shell: pwsh
+        run: |
+          $nodeVer = "${{ steps.meta.outputs.NODE_VERSION }}"
+          $url = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
+          Write-Host "Downloading Node.js $nodeVer from $url"
+          Invoke-WebRequest -Uri $url -OutFile "node-win.zip" -UseBasicParsing
+          Expand-Archive -Path "node-win.zip" -DestinationPath "installer_staging" -Force
+          Rename-Item "installer_staging\node-v$nodeVer-win-x64" "installer_staging\node"
+          Write-Host "Node.js runtime staged at installer_staging\node"
+
+      # ── Download NSSM (Non-Sucking Service Manager) ───────────────────────────
+      # NSSM wraps the Node.js process as a proper Windows service with auto-restart,
+      # log rotation, and clean start/stop semantics — the same approach used by
+      # Sonarr, Radarr, and other *Arr apps on Windows.
+      - name: Download NSSM
+        shell: pwsh
+        run: |
+          $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+          Invoke-WebRequest -Uri $nssmUrl -OutFile "nssm.zip" -UseBasicParsing
+          Expand-Archive -Path "nssm.zip" -DestinationPath "installer_staging\nssm_tmp" -Force
+          Copy-Item "installer_staging\nssm_tmp\nssm-2.24\win64\nssm.exe" "installer_staging\nssm.exe"
+          Remove-Item "installer_staging\nssm_tmp" -Recurse -Force
+          Write-Host "NSSM staged"
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress --version=3.10
+          refreshenv
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.VERSION }}"
+          $nsisExe = "C:\Program Files (x86)\NSIS\makensis.exe"
+
+          # Resolve absolute paths for NSIS defines
+          $appDir   = (Resolve-Path "installer_staging\app").Path
+          $nodeDir  = (Resolve-Path "installer_staging\node").Path
+          $nssmExe  = (Resolve-Path "installer_staging\nssm.exe").Path
+          $nsiScript = (Resolve-Path "installer\windows\questarr.nsi").Path
+          $licenseFile = (Resolve-Path "COPYING").Path
+
+          Write-Host "Building installer for version $version"
+          & $nsisExe `
+            /DVERSION="$version" `
+            /DAPP_DIR="$appDir" `
+            /DNODE_DIR="$nodeDir" `
+            /DNSSM_EXE="$nssmExe" `
+            /DLICENSE_FILE="$licenseFile" `
+            $nsiScript
+
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "Installer built successfully"
+
+      - name: Verify installer artifact
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.VERSION }}"
+          $installer = "questarr-$version-windows-x64-setup.exe"
+          if (-not (Test-Path $installer)) {
+            Write-Error "Installer not found: $installer"
+            exit 1
+          }
+          $size = [math]::Round((Get-Item $installer).Length / 1MB, 1)
+          Write-Host "Installer: $installer  ($size MB)"
+
+      - name: Upload installer to GitHub Release
+        if: github.event_name == 'release' || inputs.upload_to_release == true
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          files: questarr-${{ steps.meta.outputs.VERSION }}-windows-x64-setup.exe
+          fail_on_unmatched_files: true
+
+      - name: Upload installer artifact (workflow_dispatch without release upload)
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_to_release != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: questarr-${{ steps.meta.outputs.VERSION }}-windows-x64-setup
+          path: questarr-${{ steps.meta.outputs.VERSION }}-windows-x64-setup.exe
+          retention-days: 7
