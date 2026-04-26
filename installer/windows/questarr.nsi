@@ -157,6 +157,9 @@ Section "${APP_NAME}" SecMain
 
   ; ── Stop and remove existing service (upgrade path) ───────────────────────
   ; sc query returns 0 when the service exists, non-zero otherwise.
+  ; We use sc.exe here (not nssm) because nssm.exe has not been installed yet —
+  ; it is copied in the next block.  sc stop + sc delete is sufficient to clean
+  ; up an NSSM-managed service; NSSM stores no separate state outside the SCM.
   ClearErrors
   nsExec::ExecToLog 'sc query "${SERVICE_NAME}"'
   Pop $0
@@ -165,7 +168,7 @@ Section "${APP_NAME}" SecMain
     nsExec::ExecToLog 'sc stop "${SERVICE_NAME}"'
     Pop $0
     Sleep 4000
-    nsExec::ExecToLog '"$INSTDIR\nssm.exe" remove "${SERVICE_NAME}" confirm'
+    nsExec::ExecToLog 'sc delete "${SERVICE_NAME}"'
     Pop $0
     Sleep 1000
   ${EndIf}
@@ -246,8 +249,7 @@ Section "${APP_NAME}" SecMain
   nsExec::ExecToLog '"$INSTDIR\nssm.exe" start "${SERVICE_NAME}"'
   Pop $0
   ${If} $0 != 0
-    MessageBox MB_ICONEXCLAMATION|MB_OK \
-      "${APP_NAME} was installed but the service could not start automatically.$\r$\n$\r$\nYou can start it from the Windows Services console (services.msc) or by running:$\r$\n  $INSTDIR\nssm.exe start ${SERVICE_NAME}"
+    MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_NAME} was installed but the service could not start automatically.$\r$\n$\r$\nStart it from the Windows Services console (services.msc) or run:$\r$\n  $INSTDIR\nssm.exe start ${SERVICE_NAME}"
   ${EndIf}
 
   ; ── Persist install configuration to registry ──────────────────────────────
