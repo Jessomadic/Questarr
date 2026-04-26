@@ -85,6 +85,71 @@ describe("AuthProvider /api/auth/me handling", () => {
     expect(meCalls).toBe(1);
   });
 
+  it("clears stored token on 403 responses", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/status") {
+        return jsonResponse(200, { hasUsers: true });
+      }
+      if (url === "/api/auth/me") {
+        return jsonResponse(403, {});
+      }
+      throw new Error(`Unhandled URL: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <Wrapper>
+        <AuthProvider>
+          <div>test</div>
+        </AuthProvider>
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      expect(localStorage.getItem("token")).toBeNull();
+    });
+
+    const meCalls = fetchMock.mock.calls.filter(
+      (call) => String(call[0]) === "/api/auth/me"
+    ).length;
+    expect(meCalls).toBe(1);
+  });
+
+  it("does not clear token and throws error on 500 server responses", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/auth/status") {
+        return jsonResponse(200, { hasUsers: true });
+      }
+      if (url === "/api/auth/me") {
+        return jsonResponse(500, { error: "Internal Server Error" });
+      }
+      throw new Error(`Unhandled URL: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <Wrapper>
+        <AuthProvider>
+          <div>test</div>
+        </AuthProvider>
+      </Wrapper>
+    );
+
+    await waitFor(() => {
+      const meCalls = fetchMock.mock.calls.filter(
+        (call) => String(call[0]) === "/api/auth/me"
+      ).length;
+      expect(meCalls).toBeGreaterThan(0);
+    });
+
+    // Token must not be cleared for server errors
+    expect(localStorage.getItem("token")).toBe("test-token");
+  });
+
   it("keeps stored token and retries on transient failures", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

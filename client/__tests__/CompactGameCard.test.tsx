@@ -148,4 +148,16 @@ describe("CompactGameCard", () => {
 
     expect(await screen.findByText("Loading game details...")).toBeInTheDocument();
   });
+
+  it("shows Early Access badge when earlyAccess is true", () => {
+    const game = { ...mockGame, earlyAccess: true } as unknown as Game;
+    renderWithProviders(<CompactGameCard game={game} />);
+    expect(screen.getByText("Early Access")).toBeInTheDocument();
+  });
+
+  it("does not show Early Access badge when earlyAccess is false", () => {
+    const game = { ...mockGame, earlyAccess: false } as unknown as Game;
+    renderWithProviders(<CompactGameCard game={game} />);
+    expect(screen.queryByText("Early Access")).not.toBeInTheDocument();
+  });
 });

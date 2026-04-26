@@ -130,4 +130,31 @@ describe("GameCard", () => {
     renderComponent({ game: { ...mockGame, genres: [] } });
     expect(screen.getByText("No genres")).toBeInTheDocument();
   });
+
+  it("shows Early Access badge when earlyAccess is true", () => {
+    renderComponent({ game: { ...mockGame, earlyAccess: true } });
+    expect(screen.getByText("Early Access")).toBeInTheDocument();
+  });
+
+  it("does not show Early Access badge when earlyAccess is false", () => {
+    renderComponent({ game: { ...mockGame, earlyAccess: false } });
+    expect(screen.queryByText("Early Access")).not.toBeInTheDocument();
+  });
+
+  it("shows user rating when userRating is set", () => {
+    renderComponent({ game: { ...mockGame, userRating: 7.5 } });
+    expect(screen.getByTestId("text-user-rating-1")).toHaveTextContent("7.5/10");
+  });
+
+  it("does not show user rating section when userRating is null", () => {
+    renderComponent({ game: { ...mockGame, userRating: null } });
+    expect(screen.queryByTestId("text-user-rating-1")).not.toBeInTheDocument();
+  });
+
+  it("status button has aria-label with next status name", () => {
+    renderComponent({ game: { ...mockGame, status: "owned" } });
+    expect(
+      screen.getByRole("button", { name: /Mark Test Game as Completed/i })
+    ).toBeInTheDocument();
+  });
 });

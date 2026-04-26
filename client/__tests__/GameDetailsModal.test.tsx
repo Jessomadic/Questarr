@@ -61,6 +61,7 @@ vi.mock("lucide-react", () => ({
   Building2: (props: Record<string, unknown>) => <div data-testid="icon-building2" {...props} />,
   Search: (props: Record<string, unknown>) => <div data-testid="icon-search" {...props} />,
   ThumbsUp: (props: Record<string, unknown>) => <div data-testid="icon-thumbs-up" {...props} />,
+  Trash2: (props: Record<string, unknown>) => <div data-testid="icon-trash2" {...props} />,
 }));
 
 vi.mock("react-icons/fa", () => ({
@@ -506,6 +507,126 @@ describe("GameDetailsModal", () => {
       );
       // No game title rendered, no crash
       expect(screen.queryByTestId("text-game-title-1")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("scoreColor branches", () => {
+    it("renders without error for amber-range rating (6.0–7.4)", () => {
+      renderComponent({ ...mockGame, rating: 6.5 } as unknown as import("@shared/schema").Game);
+      expect(screen.getByTestId("text-game-title-1")).toBeInTheDocument();
+    });
+
+    it("renders without error for red-range rating (< 6.0)", () => {
+      renderComponent({ ...mockGame, rating: 5.0 } as unknown as import("@shared/schema").Game);
+      expect(screen.getByTestId("text-game-title-1")).toBeInTheDocument();
+    });
+  });
+
+  describe("SourceBadge variants", () => {
+    it("shows 'Steam Wishlist' badge when source is steam", () => {
+      renderComponent({ ...mockGame, source: "steam" } as unknown as import("@shared/schema").Game);
+      expect(screen.getByText("Steam Wishlist")).toBeInTheDocument();
+    });
+
+    it("shows 'Via API' badge when source is api", () => {
+      renderComponent({ ...mockGame, source: "api" } as unknown as import("@shared/schema").Game);
+      expect(screen.getByText("Via API")).toBeInTheDocument();
+    });
+
+    it("shows 'Added Manually' badge when source is manual", () => {
+      renderComponent({
+        ...mockGame,
+        source: "manual",
+      } as unknown as import("@shared/schema").Game);
+      expect(screen.getByText("Added Manually")).toBeInTheDocument();
+    });
+  });
+
+  describe("ProtonDB link in Links tab", () => {
+    it("shows ProtonDB link when game has steamAppId", async () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(makeFetchMock());
+      renderComponent({
+        ...mockGame,
+        steamAppId: 12345,
+      } as unknown as import("@shared/schema").Game);
+      fireEvent.click(screen.getByRole("tab", { name: /links/i }));
+
+      const protonLink = await screen.findByRole("link", { name: /protondb/i });
+      expect(protonLink).toHaveAttribute("href", "https://www.protondb.com/app/12345");
+    });
+
+    it("does not show ProtonDB link when game has no steamAppId", () => {
+      renderComponent({
+        ...mockGame,
+        steamAppId: null,
+      } as unknown as import("@shared/schema").Game);
+      fireEvent.click(screen.getByRole("tab", { name: /links/i }));
+      expect(screen.queryByRole("link", { name: /protondb/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("PCGamingWiki URL from API", () => {
+    it("uses API-provided URL when steamAppId is set and API returns a URL", async () => {
+      const pcgwUrl = "https://www.pcgamingwiki.com/wiki/TestGame";
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+        makeFetchMock({ "/api/external/pcgamingwiki": { url: pcgwUrl } })
+      );
+
+      renderComponent({
+        ...mockGame,
+        steamAppId: 12345,
+      } as unknown as import("@shared/schema").Game);
+      fireEvent.click(screen.getByRole("tab", { name: /links/i }));
+
+      await waitFor(() => {
+        const pcgwLinks = screen.getAllByRole("link", { name: /pcgamingwiki/i });
+        expect(pcgwLinks.some((el) => el.getAttribute("href") === pcgwUrl)).toBe(true);
+      });
+    });
+  });
+
+  describe("Downloads tab", () => {
+    it("shows empty state when no downloads exist", async () => {
+      const qc = createQueryClient();
+      qc.setQueryData(["/api/games/1/downloads"], []);
+      render(
+        <QueryClientProvider client={qc}>
+          <GameDetailsModal game={mockGame} open={true} onOpenChange={() => {}} />
+          <Toaster />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("No downloads recorded for this game.")).toBeInTheDocument();
+      });
+    });
+
+    it("shows download entry with DownloadStatusIcon when downloads exist", async () => {
+      const download = {
+        id: "dl-1",
+        downloadTitle: "Test Game-SKIDROW",
+        status: "downloading",
+        downloadType: "main",
+        downloaderName: "qBittorrent",
+        fileSize: null,
+        downloadHash: "abc123",
+      };
+      const qc = createQueryClient();
+      qc.setQueryData(["/api/games/1/downloads"], [download]);
+      (global.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+        makeFetchMock({ "/api/games/1/downloads": [download] })
+      );
+      render(
+        <QueryClientProvider client={qc}>
+          <GameDetailsModal game={mockGame} open={true} onOpenChange={() => {}} />
+          <Toaster />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Test Game-SKIDROW")).toBeInTheDocument();
+        expect(screen.getByTestId("icon-loader2")).toBeInTheDocument();
+      });
     });
   });
 
