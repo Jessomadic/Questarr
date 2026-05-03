@@ -308,8 +308,14 @@ function YearView({
         const monthStr = (month + 1).toString().padStart(2, "0");
         const monthPrefix = `${year}-${monthStr}-`;
 
-        const gamesInMonth = allGamesEntries.filter(([date]) => date.startsWith(monthPrefix));
-        const gameCount = gamesInMonth.reduce((sum, [, games]) => sum + games.length, 0);
+        let gameCount = 0;
+        const gamesInMonth: [string, Game[]][] = [];
+        for (const entry of allGamesEntries) {
+          if (entry[0].startsWith(monthPrefix)) {
+            gamesInMonth.push(entry);
+            gameCount += entry[1].length;
+          }
+        }
 
         return (
           <div key={month} className="bg-card border rounded-lg p-4">
