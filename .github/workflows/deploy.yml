@@ -27,10 +27,10 @@ on:
   schedule:
     - cron: "0 0 * * *"
 
-  # Trigger on release/1.3.0 branch for dev release
+  # Trigger on release/1.4.0 branch for dev release
   push:
     branches:
-      - "release/1.3.0"
+      - "release/1.4.0"
 
 permissions:
   contents: read
@@ -39,7 +39,7 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    environment: ${{ (github.event_name == 'schedule' || github.ref == 'refs/heads/release/1.3.0') && 'dev' || inputs.environment || 'production' }}
+    environment: ${{ (github.event_name == 'schedule' || github.ref == 'refs/heads/release/1.4.0') && 'dev' || inputs.environment || 'production' }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -58,7 +58,7 @@ jobs:
           INPUT_ENVIRONMENT: ${{ inputs.environment }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          if [ "$EVENT_NAME" == "schedule" ] || [ "$GH_REF" == "refs/heads/release/1.3.0" ]; then
+          if [ "$EVENT_NAME" == "schedule" ] || [ "$GH_REF" == "refs/heads/release/1.4.0" ]; then
             echo "ENVIRONMENT=dev" >> $GITHUB_ENV
             echo "environment=dev" >> $GITHUB_OUTPUT
           else
