@@ -82,10 +82,14 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $packageJson = Get-Content package.json | ConvertFrom-Json
+          $repo = $env:GITHUB_REPOSITORY
           $tag = $env:INPUT_TAG
+          $autoIncrementTag = $false
 
           if ([string]::IsNullOrWhiteSpace($tag)) {
             if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
@@ -94,11 +98,65 @@ jobs:
               $tag = $env:GITHUB_REF_NAME
             } else {
               $tag = "v$($packageJson.version)"
+              $autoIncrementTag = $true
             }
           }
 
           if (-not $tag.StartsWith("v")) {
             $tag = "v$tag"
+          }
+
+          function Test-GitTagExists {
+            param([Parameter(Mandatory = $true)][string] $Candidate)
+
+            $tagRef = git ls-remote --tags origin "refs/tags/$Candidate"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to check whether git tag $Candidate exists"
+            }
+
+            return -not [string]::IsNullOrWhiteSpace($tagRef)
+          }
+
+          function Test-ReleaseExists {
+            param([Parameter(Mandatory = $true)][string] $Candidate)
+
+            $previousErrorActionPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            gh release view $Candidate --repo $repo *> $null
+            $releaseExists = $LASTEXITCODE -eq 0
+            $ErrorActionPreference = $previousErrorActionPreference
+
+            return $releaseExists
+          }
+
+          function Test-ReleaseTagExists {
+            param([Parameter(Mandatory = $true)][string] $Candidate)
+
+            return (Test-GitTagExists $Candidate) -or (Test-ReleaseExists $Candidate)
+          }
+
+          function Get-NextPatchTag {
+            param([Parameter(Mandatory = $true)][string] $BaseTag)
+
+            $version = $BaseTag.TrimStart("v")
+            if ($version -notmatch "^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$") {
+              throw "Cannot auto-increment non-semver release tag '$BaseTag'. Provide an explicit workflow tag."
+            }
+
+            $major = [int]$Matches.major
+            $minor = [int]$Matches.minor
+            $patch = [int]$Matches.patch
+
+            do {
+              $candidate = "v$major.$minor.$patch"
+              $patch++
+            } while (Test-ReleaseTagExists $candidate)
+
+            return $candidate
+          }
+
+          if ($autoIncrementTag) {
+            $tag = Get-NextPatchTag $tag
           }
 
           $version = $tag.TrimStart("v")
@@ -200,7 +258,13 @@ jobs:
             "Installs Questarr as a Windows service, starts it automatically, adds an inbound Windows Firewall rule for the bundled runtime, and stores runtime data under C:\ProgramData\Questarr."
           ) | Set-Content -Path $notesPath -Encoding utf8
 
-          if (gh release view $tag --repo $repo *> $null) {
+          $previousErrorActionPreference = $ErrorActionPreference
+          $ErrorActionPreference = "Continue"
+          gh release view $tag --repo $repo *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+          $ErrorActionPreference = $previousErrorActionPreference
+
+          if ($releaseExists) {
             $editArgs = @(
               "release",
               "edit",
