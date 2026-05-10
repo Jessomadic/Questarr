@@ -90,6 +90,10 @@ jobs:
           $repo = $env:GITHUB_REPOSITORY
           $tag = $env:INPUT_TAG
           $autoIncrementTag = $false
+          $existingReleaseTags = @(gh release list --repo $repo --limit 1000 --json tagName --jq ".[].tagName")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to list existing GitHub releases"
+          }
 
           if ([string]::IsNullOrWhiteSpace($tag)) {
             if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
@@ -120,13 +124,7 @@ jobs:
           function Test-ReleaseExists {
             param([Parameter(Mandatory = $true)][string] $Candidate)
 
-            $previousErrorActionPreference = $ErrorActionPreference
-            $ErrorActionPreference = "Continue"
-            gh release view $Candidate --repo $repo *> $null
-            $releaseExists = $LASTEXITCODE -eq 0
-            $ErrorActionPreference = $previousErrorActionPreference
-
-            return $releaseExists
+            return $existingReleaseTags -contains $Candidate
           }
 
           function Test-ReleaseTagExists {
@@ -162,6 +160,7 @@ jobs:
           $version = $tag.TrimStart("v")
           $artifact = "QuestarrSetup-$version-windows-x64.exe"
 
+          Write-Host "Resolved Windows release tag: $tag"
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "artifact=$artifact" >> $env:GITHUB_OUTPUT
@@ -258,11 +257,11 @@ jobs:
             "Installs Questarr as a Windows service, starts it automatically, adds an inbound Windows Firewall rule for the bundled runtime, and stores runtime data under C:\ProgramData\Questarr."
           ) | Set-Content -Path $notesPath -Encoding utf8
 
-          $previousErrorActionPreference = $ErrorActionPreference
-          $ErrorActionPreference = "Continue"
-          gh release view $tag --repo $repo *> $null
-          $releaseExists = $LASTEXITCODE -eq 0
-          $ErrorActionPreference = $previousErrorActionPreference
+          $existingReleaseTags = @(gh release list --repo $repo --limit 1000 --json tagName --jq ".[].tagName")
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to list existing GitHub releases"
+          }
+          $releaseExists = $existingReleaseTags -contains $tag
 
           if ($releaseExists) {
             $editArgs = @(
