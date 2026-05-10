@@ -67,6 +67,23 @@ const mockSearchXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
+const mockSearchXmlWithCategoryLabel = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/dtd/2010/newznab/1.0">
+  <channel>
+    <title>My Newznab</title>
+    <item>
+      <title>DISHONORED.2-STEAMPUNKS</title>
+      <guid isPermaLink="true">789</guid>
+      <link>http://example.com/get/789</link>
+      <pubDate>Thu, 21 Feb 2026 12:00:00 +0000</pubDate>
+      <category>PC &gt; Games</category>
+      <enclosure url="http://example.com/get/789" length="102400" type="application/x-nzb" />
+      <newznab:attr name="category" value="4050" />
+      <newznab:attr name="size" value="102400" />
+    </item>
+  </channel>
+</rss>`;
+
 describe("NewznabClient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,6 +118,23 @@ describe("NewznabClient", () => {
       expect(results[0].grabs).toBe(5);
       expect(results[0].files).toBe(1);
       expect(results[0].category).toContain("4000");
+    });
+
+    it("should preserve category labels and extract numeric category attrs", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: true,
+        text: async () => mockSearchXmlWithCategoryLabel,
+      });
+
+      const results = await newznabClient.search(mockIndexer, {
+        query: "dishonored 2",
+        category: ["4000"],
+      });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].category).toContain("PC > Games");
+      expect(results[0].category).toContain("4050");
     });
 
     it("should filter results by category correctly", async () => {

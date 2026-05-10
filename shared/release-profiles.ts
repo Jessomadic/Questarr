@@ -9,6 +9,7 @@ import {
 
 export type ReleaseProtocolPreference = "torrent" | "usenet" | "either";
 export type ReleaseTitleMatch = "exact" | "contains" | "fuzzy" | "mismatch" | "ambiguous-title";
+export type IndexerCategoryClassification = "game" | "non-game" | "unknown";
 export type CustomFormatConditionType =
   | "builtin"
   | "title"
@@ -335,13 +336,62 @@ function addScore(
   return format;
 }
 
+const GAME_CATEGORY_LABEL_PATTERN = /\b(?:game|games)\b/i;
+const NON_GAME_CATEGORY_LABEL_PATTERN =
+  /\b(?:app|apps|application|applications|audio|book|books|ebook|ebooks|movie|movies|music|software|tv|manual|manuals|trainer|trainers|xxx|adult)\b/i;
+
+function isNumericGameCategory(category: string): boolean {
+  return /^40\d{2}$/.test(category.trim());
+}
+
+function isTextGameCategory(category: string): boolean {
+  const normalized = normalizeTitle(category);
+  return GAME_CATEGORY_LABEL_PATTERN.test(normalized);
+}
+
+function isKnownNonGameCategory(category: string): boolean {
+  const normalized = normalizeTitle(category);
+  return NON_GAME_CATEGORY_LABEL_PATTERN.test(normalized);
+}
+
+export function classifyIndexerCategories(categories: string[]): IndexerCategoryClassification {
+  const usableCategories = categories.map((category) => category.trim()).filter(Boolean);
+  if (usableCategories.length === 0) return "unknown";
+  if (
+    usableCategories.some(
+      (category) => isNumericGameCategory(category) || isTextGameCategory(category)
+    )
+  ) {
+    return "game";
+  }
+  if (usableCategories.some(isKnownNonGameCategory)) return "non-game";
+  return "non-game";
+}
+
+export function categoriesMatchIndexerCategoryRequest(
+  itemCategories: string[],
+  requestedCategories: string[]
+): boolean {
+  if (itemCategories.length === 0) return true;
+
+  return itemCategories.some((itemCategory) =>
+    requestedCategories.some((requestedCategory) => {
+      const item = itemCategory.trim();
+      const requested = requestedCategory.trim();
+      if (!item || !requested) return false;
+      if (item === requested) return true;
+      if (requested.endsWith("000") && item.startsWith(requested.substring(0, 1))) return true;
+      return isNumericGameCategory(requested) && classifyIndexerCategories([item]) === "game";
+    })
+  );
+}
+
 function hasGameCategory(categories: string[]): boolean {
-  return categories.some((category) => category === "4000" || category.startsWith("40"));
+  return classifyIndexerCategories(categories) === "game";
 }
 
 function hasOnlyNonGameCategories(categories: string[]): boolean {
-  if (categories.length === 0) return false;
-  return !hasGameCategory(categories);
+  return classifyIndexerCategories(categories) === "non-game";
 }
 
 function tokenSequenceIndex(haystack: string[], needle: string[]): number {

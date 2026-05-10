@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { type Indexer } from "@shared/schema";
+import { categoriesMatchIndexerCategoryRequest } from "../shared/release-profiles.js";
 import { routesLogger } from "./logger.js";
 import { isSafeUrl, safeFetch } from "./ssrf.js";
 
@@ -347,9 +348,17 @@ class NewznabClient {
             const cats = Array.isArray(item.category) ? item.category : [item.category];
             categories.push(...cats.filter(Boolean).map(String));
           }
+          for (const attr of attrsArray) {
+            if (attr["@_name"] === "category" && attr["@_value"]) {
+              categories.push(String(attr["@_value"]));
+            }
+          }
+          const uniqueCategories = Array.from(
+            new Set(categories.map((category) => category.trim()).filter(Boolean))
+          );
 
           routesLogger.debug(
-            { title: item.title, categories, indexer: indexer.name },
+            { title: item.title, categories: uniqueCategories, indexer: indexer.name },
             "parsed newznab item category"
           );
 
@@ -360,7 +369,7 @@ class NewznabClient {
             publishDate: item.pubDate,
             indexerId: indexer.id,
             indexerName: indexer.name,
-            category: categories,
+            category: uniqueCategories,
             guid: item.guid?.["#text"] || item.guid,
             // Usenet-specific
             grabs: (() => {
@@ -396,22 +405,7 @@ class NewznabClient {
           // If item has no category info, we keep it (conservative approach)
           if (!item.category || item.category.length === 0) return true;
 
-          // Check if any of the item's categories match any of the requested categories
-          return item.category.some((itemCat) =>
-            requestedCats.some((reqCat) => {
-              if (itemCat === reqCat) return true;
-
-              // Handle parent categories (e.g. 4000 matches 4050)
-              // If request is X000 (e.g. 4000), it matches 4xxx
-              if (reqCat.endsWith("000") && itemCat.startsWith(reqCat.substring(0, 1))) {
-                return true;
-              }
-              // If request is XX00 (e.g. 4000), it matches 40xx?
-              // Actually 4000 usually means the whole 4xxx block in Torznab/Newznab.
-
-              return false;
-            })
-          );
+          return categoriesMatchIndexerCategoryRequest(item.category, requestedCats);
         });
 
         if (results.length < initialCount) {

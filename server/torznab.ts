@@ -1,4 +1,5 @@
 import { type Indexer } from "@shared/schema";
+import { categoriesMatchIndexerCategoryRequest } from "../shared/release-profiles.js";
 import { torznabLogger } from "./logger.js";
 import { safeFetch } from "./ssrf.js";
 import { XMLParser } from "fast-xml-parser";
@@ -91,17 +92,7 @@ export class TorznabClient {
 
         result.items = result.items.filter((item) => {
           if (!item.category) return true;
-          // Note: TorznabItem.category is a string (single category?)
-          // or did I define it as string[]? Interface says string | undefined.
-          // But parsing might put a single value.
-
-          return requestedCats.some((reqCat) => {
-            if (item.category === reqCat) return true;
-            if (reqCat.endsWith("000") && item.category!.startsWith(reqCat.substring(0, 1))) {
-              return true;
-            }
-            return false;
-          });
+          return categoriesMatchIndexerCategoryRequest(item.category.split(","), requestedCats);
         });
 
         if (result.items.length < initialCount) {

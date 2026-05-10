@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CUSTOM_FORMATS, evaluateRelease } from "../release-profiles";
+import {
+  classifyIndexerCategories,
+  DEFAULT_CUSTOM_FORMATS,
+  evaluateRelease,
+} from "../release-profiles";
 
 describe("release profile evaluation", () => {
+  it("classifies numeric and label-based game categories", () => {
+    expect(classifyIndexerCategories(["4050"])).toBe("game");
+    expect(classifyIndexerCategories(["4000"])).toBe("game");
+    expect(classifyIndexerCategories(["PC > Games"])).toBe("game");
+    expect(classifyIndexerCategories(["Games"])).toBe("game");
+    expect(classifyIndexerCategories(["PC > Games", "4050"])).toBe("game");
+  });
+
+  it("classifies non-game categories without treating generic PC as games", () => {
+    expect(classifyIndexerCategories(["Movies > HD"])).toBe("non-game");
+    expect(classifyIndexerCategories(["TV > HD"])).toBe("non-game");
+    expect(classifyIndexerCategories(["Audio > FLAC"])).toBe("non-game");
+    expect(classifyIndexerCategories(["Books"])).toBe("non-game");
+    expect(classifyIndexerCategories(["PC > Applications"])).toBe("non-game");
+    expect(classifyIndexerCategories(["PC"])).toBe("non-game");
+  });
+
   it("scores matching Newznab game releases above unrelated media", () => {
     const good = evaluateRelease({
       title: "Test.Game.Complete.Edition.PC-GRP",
@@ -91,6 +112,40 @@ describe("release profile evaluation", () => {
         downloadType: "usenet",
       }).accepted
     ).toBe(true);
+  });
+
+  it("accepts label-based game categories without a numeric category id", () => {
+    const decision = evaluateRelease({
+      title: "DISHONORED.2-STEAMPUNKS",
+      gameTitle: "Dishonored 2",
+      category: ["PC > Games"],
+      downloadType: "usenet",
+      grabs: 155,
+      files: 1,
+    });
+
+    expect(decision.accepted).toBe(true);
+    expect(decision.matchedFormats).toContain("Games category");
+    expect(decision.matchedFormats).not.toContain("Non-game category");
+    expect(decision.rejectionReasons).not.toContain("Indexer category is not a games category");
+  });
+
+  it("keeps sequel hard rejects when the category is valid", () => {
+    const decision = evaluateRelease({
+      title: "DISHONORED.2-STEAMPUNKS",
+      gameTitle: "Dishonored",
+      category: ["PC > Games"],
+      downloadType: "usenet",
+      grabs: 155,
+      files: 1,
+    });
+
+    expect(decision.accepted).toBe(false);
+    expect(decision.titleMatch).toBe("ambiguous-title");
+    expect(decision.rejectionReasons).toContain(
+      "Release appears to be a sequel or spin-off of the requested game"
+    );
+    expect(decision.rejectionReasons).not.toContain("Indexer category is not a games category");
   });
 
   it("allows metadata-only suffixes for base-title searches", () => {
