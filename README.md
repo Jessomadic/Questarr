@@ -210,6 +210,13 @@ If you are upgrading from an older version that used PostgreSQL, you need to mig
 
 See [docs/MIGRATION.md](docs/MIGRATION.md) for more details.
 
+### Windows Installer Release
+
+The Windows release workflow builds an x64 installer on `windows-latest`.
+The installer adds Questarr as a Windows service, creates an inbound Windows
+Firewall rule for the bundled runtime, and stores runtime data under
+`C:\ProgramData\Questarr`.
+
 ## Configuration
 
 1. **First-time setup:**

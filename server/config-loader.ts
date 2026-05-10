@@ -27,7 +27,8 @@ export class ConfigLoader {
       this.configPath = configPath;
     } else {
       // Prioritize data/config.yaml for persistence
-      const dataConfigPath = path.join(process.cwd(), "data", "config.yaml");
+      const dataDir = process.env.QUESTARR_DATA_DIR || path.join(process.cwd(), "data");
+      const dataConfigPath = path.join(dataDir, "config.yaml");
       const rootConfigPath = path.join(process.cwd(), "config.yaml");
 
       if (fs.existsSync(dataConfigPath)) {
@@ -100,6 +101,7 @@ export class ConfigLoader {
 
       this.config = result.data;
       const yamlStr = yaml.dump(this.config);
+      await fs.promises.mkdir(path.dirname(this.configPath), { recursive: true });
       await fs.promises.writeFile(this.configPath, yamlStr, "utf8");
     } catch (error) {
       console.error("Error saving config.yaml:", error);
