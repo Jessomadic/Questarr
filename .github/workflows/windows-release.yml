@@ -1,0 +1,243 @@
+name: Windows Installer Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag. Leave empty to use package.json version."
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    if: ${{ github.event_name != 'release' || github.actor != 'github-actions[bot]' }}
+
+    env:
+      NODE_VERSION: 22.x
+      DOTNET_VERSION: 8.0.x
+      INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
+      PRERELEASE: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || (github.event_name == 'release' && github.event.release.prerelease) || false }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npm run check
+
+      - name: Build project
+        run: npm run build
+
+      - name: Publish Windows service host
+        shell: pwsh
+        run: |
+          dotnet publish installer/windows/Questarr.Service/Questarr.Service.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            --output release/service
+
+      - name: Prune development dependencies
+        run: npm prune --omit=dev
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageJson = Get-Content package.json | ConvertFrom-Json
+          $tag = $env:INPUT_TAG
+
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
+              $tag = $env:RELEASE_TAG
+            } elseif ($env:GITHUB_REF_TYPE -eq "tag") {
+              $tag = $env:GITHUB_REF_NAME
+            } else {
+              $tag = "v$($packageJson.version)"
+            }
+          }
+
+          if (-not $tag.StartsWith("v")) {
+            $tag = "v$tag"
+          }
+
+          $version = $tag.TrimStart("v")
+          $artifact = "QuestarrSetup-$version-windows-x64.exe"
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "artifact=$artifact" >> $env:GITHUB_OUTPUT
+
+      - name: Prepare installer payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $payloadRoot = Join-Path "release" "payload"
+          $binDir = Join-Path $payloadRoot "bin"
+
+          New-Item -ItemType Directory -Force -Path $payloadRoot, $binDir | Out-Null
+          Copy-Item -Path dist, migrations, node_modules -Destination $payloadRoot -Recurse
+          Copy-Item -Path package.json, package-lock.json, README.md, COPYING -Destination $payloadRoot
+          Copy-Item -Path installer/windows/README.txt -Destination (Join-Path $payloadRoot "README-WINDOWS.txt")
+          Copy-Item -Path release/service/Questarr.Service.exe -Destination (Join-Path $payloadRoot "Questarr.Service.exe")
+
+          if (Test-Path docs) {
+            Copy-Item -Path docs -Destination $payloadRoot -Recurse
+          }
+
+          $nodePath = (Get-Command node).Source
+          Copy-Item -Path $nodePath -Destination (Join-Path $binDir "node.exe")
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installerOutput = Join-Path "release" "installer"
+          New-Item -ItemType Directory -Force -Path $installerOutput | Out-Null
+
+          $env:QUESTARR_VERSION = "${{ steps.meta.outputs.version }}"
+          $env:QUESTARR_SOURCE_DIR = (Resolve-Path (Join-Path "release" "payload")).Path
+          $env:QUESTARR_OUTPUT_DIR = (Resolve-Path $installerOutput).Path
+
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          & $iscc installer/windows/Questarr.iss
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Validate installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installerPath = Join-Path "release/installer" "${{ steps.meta.outputs.artifact }}"
+          if (-not (Test-Path $installerPath)) {
+            throw "Missing installer: $installerPath"
+          }
+
+          $installer = Get-Item $installerPath
+          if ($installer.Length -lt 10MB) {
+            throw "Installer looks too small: $($installer.Length) bytes"
+          }
+
+          $requiredPaths = @(
+            "release/payload/bin/node.exe",
+            "release/payload/Questarr.Service.exe",
+            "release/payload/dist/server/index.js",
+            "release/payload/migrations/meta/_journal.json",
+            "release/payload/node_modules/better-sqlite3",
+            "release/payload/README-WINDOWS.txt"
+          )
+
+          foreach ($path in $requiredPaths) {
+            if (-not (Test-Path $path)) {
+              throw "Missing installer payload file: $path"
+            }
+          }
+
+          & release/payload/bin/node.exe --check release/payload/dist/server/index.js
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuestarrSetup-${{ steps.meta.outputs.version }}-windows-x64
+          path: release/installer/${{ steps.meta.outputs.artifact }}
+          if-no-files-found: error
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $installerPath = Join-Path "release/installer" "${{ steps.meta.outputs.artifact }}"
+          $notesPath = Join-Path "release" "windows-release-notes.md"
+          $repo = $env:GITHUB_REPOSITORY
+
+          @(
+            "Questarr Windows x64 installer.",
+            "",
+            "Installs Questarr as a Windows service, starts it automatically, adds an inbound Windows Firewall rule for the bundled runtime, and stores runtime data under C:\ProgramData\Questarr."
+          ) | Set-Content -Path $notesPath -Encoding utf8
+
+          if (gh release view $tag --repo $repo *> $null) {
+            $editArgs = @(
+              "release",
+              "edit",
+              $tag,
+              "--repo",
+              $repo,
+              "--title",
+              "Questarr $tag",
+              "--notes-file",
+              $notesPath
+            )
+
+            if ($env:PRERELEASE -eq "true") {
+              $editArgs += "--prerelease"
+            }
+
+            & gh @editArgs
+            gh release upload $tag $installerPath --repo $repo --clobber
+          } else {
+            $args = @(
+              "release",
+              "create",
+              $tag,
+              $installerPath,
+              "--repo",
+              $repo,
+              "--target",
+              $env:GITHUB_SHA,
+              "--title",
+              "Questarr $tag",
+              "--notes-file",
+              $notesPath
+            )
+
+            if ($env:PRERELEASE -eq "true") {
+              $args += "--prerelease"
+            }
+
+            & gh @args
+          }

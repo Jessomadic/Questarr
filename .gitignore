@@ -4,6 +4,7 @@ node_modules/
 # Build and distribution
 dist/
 server/public/
+release/
 *.tar.gz
 
 # OS and IDE
