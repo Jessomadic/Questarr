@@ -4,6 +4,8 @@ Questarr Windows Installer
 The installer requires administrator rights. It installs Questarr to Program
 Files, creates a Windows service named Questarr, starts it automatically, and
 adds an inbound Windows Firewall rule for the bundled Questarr Node runtime.
+During upgrades, setup stops the existing Questarr service and any remaining
+Questarr processes running from the install directory before replacing files.
 
 After installation, open http://localhost:5000 in your browser.
 
