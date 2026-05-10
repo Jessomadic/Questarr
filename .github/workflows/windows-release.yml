@@ -15,6 +15,7 @@ on:
   push:
     branches:
       - main
+      - "codex/**"
     tags:
       - "v*"
   release:
@@ -35,7 +36,7 @@ jobs:
       DOTNET_VERSION: 8.0.x
       INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
       RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
-      PRERELEASE: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || (github.event_name == 'release' && github.event.release.prerelease) || false }}
+      PRERELEASE: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || (github.event_name == 'release' && github.event.release.prerelease) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/codex/')) || false }}
 
     steps:
       - name: Checkout code
