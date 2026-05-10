@@ -322,7 +322,7 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 // Download rules schema for auto-download filtering
 export const downloadRulesSchema = z.object({
   minSeeders: z.number().int().min(0).default(0),
-  sortBy: z.enum(["seeders", "date", "size"]).default("seeders"),
+  sortBy: z.enum(["score", "seeders", "date", "size"]).default("score"),
   visibleCategories: z
     .array(z.enum(["main", "update", "dlc", "extra"]))
     .default(["main", "update", "dlc", "extra"]),

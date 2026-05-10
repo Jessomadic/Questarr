@@ -334,13 +334,11 @@ describe("GameDownloadDialog", () => {
       expect(screen.getByText("Health")).toBeInTheDocument();
     });
 
-    // Click on Health sort header
-    // Initial state is Seeders Desc (ArrowDown). Clicking it should toggle to Asc (ArrowUp).
+    // Click on Health sort header. Initial state is Profile Score, so Health becomes Desc.
     const healthHeader = screen.getByText("Health");
     fireEvent.click(healthHeader);
 
-    // Should trigger a re-sort -> Ascending -> ArrowUp
-    expect(screen.getAllByTestId("icon-sort-up").length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("icon-sort-down").length).toBeGreaterThan(0);
   });
 
   it("blacklists a release when clicking 'Blacklist release'", async () => {

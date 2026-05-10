@@ -45,9 +45,11 @@ const CATEGORY_DEFINITIONS = [
 
 const DEFAULT_RULES: DownloadRules = {
   minSeeders: 0,
-  sortBy: "seeders",
+  sortBy: "score",
   visibleCategories: ["main", "update", "dlc", "extra"],
 };
+
+type DownloadSortBy = DownloadRules["sortBy"];
 
 export default function AutoDownloadRulesSettings({
   rules,
@@ -58,7 +60,7 @@ export default function AutoDownloadRulesSettings({
   const queryClient = useQueryClient();
 
   const [minSeeders, setMinSeeders] = useState<number>(rules?.minSeeders ?? 0);
-  const [sortBy, setSortBy] = useState<"seeders" | "date" | "size">(rules?.sortBy ?? "seeders");
+  const [sortBy, setSortBy] = useState<DownloadSortBy>(rules?.sortBy ?? "score");
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
     new Set((rules?.visibleCategories ?? ["main", "update", "dlc", "extra"]) as DownloadCategory[])
   );
@@ -132,7 +134,7 @@ export default function AutoDownloadRulesSettings({
     setMinSeeders(value);
   };
 
-  const handleSortByChange = (value: "seeders" | "date" | "size") => {
+  const handleSortByChange = (value: DownloadSortBy) => {
     setSortBy(value);
   };
 
@@ -175,14 +177,12 @@ export default function AutoDownloadRulesSettings({
             <Label htmlFor="sortBy" className="text-sm font-medium">
               Default Sort Order
             </Label>
-            <Select
-              value={sortBy}
-              onValueChange={(v) => handleSortByChange(v as "seeders" | "date" | "size")}
-            >
+            <Select value={sortBy} onValueChange={(v) => handleSortByChange(v as DownloadSortBy)}>
               <SelectTrigger id="sortBy">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="score">Profile Score (Best Match First)</SelectItem>
                 <SelectItem value="seeders">Seeders (High to Low)</SelectItem>
                 <SelectItem value="date">Date (Newest First)</SelectItem>
                 <SelectItem value="size">Size (Largest First)</SelectItem>

@@ -242,6 +242,44 @@ describe("Search Module - searchAllIndexers", () => {
     expect(result.items[1].title).toBe("Old Game");
   });
 
+  it("should sort accepted profile matches above newer rejected Newznab noise", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(
+      makeNewznabResponse([
+        {
+          title: "Test Game OST FLAC",
+          link: "http://usenet.example.com/noise",
+          publishDate: "2024-01-10T00:00:00Z",
+          size: 2000000,
+          grabs: 100,
+          category: ["3000"],
+          guid: "guid-noise",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+        {
+          title: "Test Game Complete Edition PC",
+          link: "http://usenet.example.com/game",
+          publishDate: "2024-01-01T00:00:00Z",
+          size: 2000000,
+          grabs: 10,
+          files: 12,
+          category: ["4000"],
+          guid: "guid-game",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+      ])
+    );
+
+    const result = await searchAllIndexers({ query: "test game" });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].title).toBe("Test Game Complete Edition PC");
+    expect(result.items[0].releaseDecision?.accepted).toBe(true);
+    expect(result.items[1].releaseDecision?.accepted).toBe(false);
+  });
+
   it("should aggregate errors from indexers", async () => {
     vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeTorznabIndexer()]);
     vi.mocked(torznabClient.searchMultipleIndexers).mockResolvedValue(

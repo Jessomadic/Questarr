@@ -29,7 +29,7 @@ const AUTO_SEARCH_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const XREL_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours (xREL search rate limit: 2/5s)
 const OWNED_STATUSES = new Set(["owned", "completed", "downloading"]);
 
-type DownloadSortBy = "seeders" | "date" | "size";
+type DownloadSortBy = "score" | "seeders" | "date" | "size";
 
 interface AutoSearchRules {
   minSeeders: number;
@@ -44,7 +44,7 @@ interface AutoSearchCategorizedItems {
 
 function getAutoSearchRules(downloadRules: string | null): AutoSearchRules {
   let minSeeders = 0;
-  let sortBy: DownloadSortBy = "seeders";
+  let sortBy: DownloadSortBy = "score";
   let visibleCategoriesSet = new Set(["main", "update", "dlc", "extra"]);
 
   if (downloadRules) {
@@ -63,13 +63,21 @@ function categorizeSearchItems(
   rules: AutoSearchRules
 ): AutoSearchCategorizedItems {
   const sortedItems = items
+    .filter((item) => item.releaseDecision?.accepted ?? true)
     .filter((item) => {
+      if (item.downloadType === "usenet") return true;
       const seeders = item.seeders ?? 0;
       return seeders >= rules.minSeeders;
     })
     .sort((a, b) => {
+      if (rules.sortBy === "score") {
+        const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+        if (scoreDelta !== 0) return scoreDelta;
+      }
       if (rules.sortBy === "seeders") {
-        return (b.seeders ?? 0) - (a.seeders ?? 0);
+        const aHealth = a.downloadType === "usenet" ? (a.grabs ?? 0) : (a.seeders ?? 0);
+        const bHealth = b.downloadType === "usenet" ? (b.grabs ?? 0) : (b.seeders ?? 0);
+        return bHealth - aHealth;
       }
       if (rules.sortBy === "date") {
         return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();

@@ -3,6 +3,11 @@ import { torznabClient } from "./torznab.js";
 import { newznabClient } from "./newznab.js";
 import { searchLogger } from "./logger.js";
 import { parseReleaseMetadata } from "../shared/title-utils.js";
+import {
+  DEFAULT_RELEASE_PROFILE,
+  evaluateRelease,
+  type ReleaseDecision,
+} from "../shared/release-profiles.js";
 
 export interface SearchItem {
   title: string;
@@ -26,6 +31,7 @@ export interface SearchItem {
   poster?: string;
   group?: string;
   comments?: string;
+  releaseDecision?: ReleaseDecision;
 }
 
 export interface AggregatedSearchOptions {
@@ -176,8 +182,34 @@ export async function searchAllIndexers(
     }
   }
 
-  // Default sort: Date (newest first)
+  for (const item of combinedItems) {
+    item.releaseDecision = evaluateRelease({
+      title: item.title,
+      gameTitle: options.query,
+      category: item.category,
+      downloadType: item.downloadType,
+      size: item.size,
+      seeders: item.seeders,
+      grabs: item.grabs,
+      files: item.files,
+      preferredPlatform: DEFAULT_RELEASE_PROFILE.preferredPlatform,
+    });
+  }
+
+  // Default sort: release decision, health, then date. This keeps likely game releases above
+  // category drift and non-game media, especially for broad Newznab search responses.
   combinedItems.sort((a, b) => {
+    const acceptedDelta =
+      Number(b.releaseDecision?.accepted ?? false) - Number(a.releaseDecision?.accepted ?? false);
+    if (acceptedDelta !== 0) return acceptedDelta;
+
+    const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const healthA = a.downloadType === "usenet" ? (a.grabs ?? 0) : (a.seeders ?? 0);
+    const healthB = b.downloadType === "usenet" ? (b.grabs ?? 0) : (b.seeders ?? 0);
+    if (healthB !== healthA) return healthB - healthA;
+
     const dateA = new Date(a.pubDate).getTime();
     const dateB = new Date(b.pubDate).getTime();
     return dateB - dateA;

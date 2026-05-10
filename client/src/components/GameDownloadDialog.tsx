@@ -69,6 +69,7 @@ import {
   downloadRulesSchema,
 } from "@shared/schema";
 import { groupDownloadsByCategory, type DownloadCategory } from "@shared/download-categorizer";
+import type { ReleaseDecision } from "@shared/release-profiles";
 import {
   parseReleaseMetadata,
   parseJsonStringArray,
@@ -98,6 +99,7 @@ interface DownloadItem {
   files?: number;
   poster?: string;
   group?: string;
+  releaseDecision?: ReleaseDecision;
 }
 
 interface SearchResult {
@@ -144,7 +146,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     [minSeeders]
   );
   const [selectedIndexer, setSelectedIndexer] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<"seeders" | "date" | "size">("seeders");
+  const [sortBy, setSortBy] = useState<"score" | "seeders" | "date" | "size">("score");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showFilters, setShowFilters] = useState(false);
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
@@ -337,7 +339,19 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
         })
         .sort((a, b) => {
           let comparison = 0;
-          if (sortBy === "seeders") {
+          if (sortBy === "score") {
+            comparison = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+            if (comparison === 0) {
+              comparison =
+                Number(b.releaseDecision?.accepted ?? false) -
+                Number(a.releaseDecision?.accepted ?? false);
+            }
+            if (comparison === 0) {
+              const aHealth = isUsenetItem(a) ? (a.grabs ?? 0) : (a.seeders ?? 0);
+              const bHealth = isUsenetItem(b) ? (b.grabs ?? 0) : (b.seeders ?? 0);
+              comparison = bHealth - aHealth;
+            }
+          } else if (sortBy === "seeders") {
             // Health metric: seeders for torrents, grabs for Usenet
             const aHealth = isUsenetItem(a) ? (a.grabs ?? 0) : (a.seeders ?? 0);
             const bHealth = isUsenetItem(b) ? (b.grabs ?? 0) : (b.seeders ?? 0);
@@ -671,7 +685,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     });
   };
 
-  const toggleSort = (field: "seeders" | "date" | "size") => {
+  const toggleSort = (field: "score" | "seeders" | "date" | "size") => {
     if (sortBy === field) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
     } else {
@@ -685,7 +699,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     label,
     className = "",
   }: {
-    field: "seeders" | "date" | "size";
+    field: "score" | "seeders" | "date" | "size";
     label: string;
     className?: string;
   }) => (
@@ -962,6 +976,11 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                               </div>
                               <div className="flex items-center gap-6 md:gap-10">
                                 <SortHeader
+                                  field="score"
+                                  label="Score"
+                                  className="min-w-[70px] justify-end"
+                                />
+                                <SortHeader
                                   field="date"
                                   label="Date"
                                   className="min-w-[70px] justify-end"
@@ -1128,6 +1147,55 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
 
                                     {/* Right Side: Metrics and Actions */}
                                     <div className="flex items-center gap-6 md:gap-10 flex-shrink-0">
+                                      {/* Score Column */}
+                                      <div className="min-w-[70px] text-right">
+                                        {download.releaseDecision ? (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Badge
+                                                variant={
+                                                  download.releaseDecision.accepted
+                                                    ? "secondary"
+                                                    : "destructive"
+                                                }
+                                                className="font-mono"
+                                              >
+                                                {download.releaseDecision.score}
+                                              </Badge>
+                                            </TooltipTrigger>
+                                            <TooltipContent className="max-w-xs">
+                                              <div className="space-y-1">
+                                                <div>
+                                                  {download.releaseDecision.accepted
+                                                    ? "Accepted"
+                                                    : "Rejected"}
+                                                </div>
+                                                {download.releaseDecision.matchedFormats.length >
+                                                  0 && (
+                                                  <div>
+                                                    Matches:{" "}
+                                                    {download.releaseDecision.matchedFormats.join(
+                                                      ", "
+                                                    )}
+                                                  </div>
+                                                )}
+                                                {download.releaseDecision.rejectionReasons.length >
+                                                  0 && (
+                                                  <div>
+                                                    Reasons:{" "}
+                                                    {download.releaseDecision.rejectionReasons.join(
+                                                      ", "
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        ) : (
+                                          "-"
+                                        )}
+                                      </div>
+
                                       {/* Date Column */}
                                       <div className="min-w-[70px] text-right">
                                         <div className="text-xs font-medium">

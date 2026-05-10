@@ -24,6 +24,7 @@ import {
   type Downloader,
 } from "../shared/schema.js";
 import { torznabClient } from "./torznab.js";
+import { newznabClient } from "./newznab.js";
 import { rssService } from "./rss.js";
 import { DownloaderManager } from "./downloaders.js";
 import { z } from "zod";
@@ -83,6 +84,11 @@ import {
   matchesPlatformFilter,
 } from "../shared/title-utils.js";
 import { categorizeDownload } from "../shared/download-categorizer.js";
+import {
+  DEFAULT_CUSTOM_FORMATS,
+  DEFAULT_RELEASE_PROFILE,
+  evaluateRelease,
+} from "../shared/release-profiles.js";
 import archiver from "archiver";
 import helmet from "helmet";
 import { steamRoutes } from "./steam-routes.js";
@@ -118,6 +124,22 @@ export function parseCategories(input: unknown): string[] | undefined {
   }
 
   return undefined;
+}
+
+function isNewznabIndexer(indexer: Pick<Indexer, "protocol">): boolean {
+  return indexer.protocol === "newznab";
+}
+
+function testIndexerConnection(indexer: Indexer) {
+  return isNewznabIndexer(indexer)
+    ? newznabClient.testConnection(indexer)
+    : torznabClient.testConnection(indexer);
+}
+
+function getIndexerCategories(indexer: Indexer) {
+  return isNewznabIndexer(indexer)
+    ? newznabClient.getCategories(indexer)
+    : torznabClient.getCategories(indexer);
 }
 
 // Helper function for aggregated indexer search
@@ -172,8 +194,11 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
                 return matchesPlatformFilter(platform, preferredPlatform);
               })
             : filteredItems;
+          const acceptedItems = platformFiltered.filter(
+            (item) => item.releaseDecision?.accepted ?? true
+          );
           storage
-            .updateGameSearchResultsAvailable(game.id, platformFiltered.length > 0)
+            .updateGameSearchResultsAvailable(game.id, acceptedItems.length > 0)
             .catch((err) => routesLogger.warn({ err }, "Failed to update searchResultsAvailable"));
         }
       }
@@ -1797,11 +1822,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     handleAggregatedIndexerSearch
   );
 
+  app.get("/api/release-profiles", (_req, res) => {
+    res.json([DEFAULT_RELEASE_PROFILE]);
+  });
+
+  app.get("/api/custom-formats", (_req, res) => {
+    res.json(DEFAULT_CUSTOM_FORMATS);
+  });
+
+  app.post("/api/search/evaluate", (req, res) => {
+    const schema = z.object({
+      title: z.string().min(1),
+      gameTitle: z.string().min(1),
+      category: z.array(z.string()).optional(),
+      downloadType: z.enum(["torrent", "usenet"]).default("usenet"),
+      size: z.number().optional(),
+      seeders: z.number().optional(),
+      grabs: z.number().optional(),
+      files: z.number().optional(),
+      preferredPlatform: z.string().nullable().optional(),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid release evaluation data" });
+    }
+
+    res.json(evaluateRelease(parsed.data));
+  });
+
   // Test indexer connection with provided configuration (doesn't require saving first)
   app.post("/api/indexers/test", async (req, res) => {
     try {
-      const { name, url, apiKey, enabled, priority, categories, rssEnabled, autoSearchEnabled } =
-        req.body;
+      const {
+        name,
+        url,
+        apiKey,
+        protocol,
+        enabled,
+        priority,
+        categories,
+        rssEnabled,
+        autoSearchEnabled,
+      } = req.body;
 
       if (!url || !apiKey) {
         return res.status(400).json({ error: "URL and API key are required" });
@@ -1817,7 +1880,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name: name || "Test Connection",
         url,
         apiKey,
-        protocol: "torznab",
+        protocol: protocol === "newznab" ? "newznab" : "torznab",
         enabled: enabled ?? true,
         priority: priority ?? 1,
         categories: categories || [],
@@ -1827,7 +1890,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: new Date(),
       };
 
-      const result = await torznabClient.testConnection(tempIndexer);
+      const result = await testIndexerConnection(tempIndexer);
       res.json(result);
     } catch (error) {
       routesLogger.error({ error }, "error testing indexer");
@@ -1847,7 +1910,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Indexer not found" });
       }
 
-      const result = await torznabClient.testConnection(indexer);
+      const result = await testIndexerConnection(indexer);
       res.json(result);
     } catch (error) {
       routesLogger.error({ error }, "error testing indexer");
@@ -1867,7 +1930,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Indexer not found" });
       }
 
-      const categories = await torznabClient.getCategories(indexer);
+      const categories = await getIndexerCategories(indexer);
       res.json(categories);
     } catch (error) {
       routesLogger.error({ error }, "error getting categories");
@@ -1896,6 +1959,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: parseInt(limit as string) || 50,
         offset: parseInt(offset as string) || 0,
       };
+
+      if (isNewznabIndexer(indexer)) {
+        const items = await newznabClient.search(indexer, searchParams);
+        res.json({ items, total: items.length, offset: searchParams.offset });
+        return;
+      }
 
       const results = await torznabClient.searchGames(indexer, searchParams);
       res.json(results);
