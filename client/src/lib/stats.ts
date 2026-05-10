@@ -66,7 +66,7 @@ export function calculateLibraryStats(games: Game[]): LibraryStats {
 
   // Avg Release Year
   const years = games
-    .map((g) => (g.releaseDate ? new Date(g.releaseDate).getFullYear() : NaN))
+    .map((g) => (g.releaseDate ? new Date(g.releaseDate).getUTCFullYear() : NaN))
     .filter((year) => !isNaN(year));
   const avgReleaseYear =
     years.length > 0

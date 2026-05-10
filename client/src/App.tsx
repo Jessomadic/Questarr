@@ -21,6 +21,7 @@ const DownloadsPage = lazy(() => import("@/pages/downloads"));
 const IndexersPage = lazy(() => import("@/pages/indexers"));
 const DownloadersPage = lazy(() => import("@/pages/downloaders"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const ArrPlaceholderPage = lazy(() => import("@/pages/arr-placeholder"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const LibraryPage = lazy(() => import("@/pages/library"));
 const CalendarPage = lazy(() => import("@/pages/calendar"));
@@ -40,13 +41,26 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/discover" component={DiscoverPage} />
         <Route path="/search" component={SearchPage} />
+        <Route path="/activity/queue" component={DownloadsPage} />
+        <Route path="/activity/history" component={ArrPlaceholderPage} />
+        <Route path="/activity/blocklist" component={ArrPlaceholderPage} />
+        <Route path="/activity" component={DownloadsPage} />
         <Route path="/downloads" component={DownloadsPage} />
         <Route path="/indexers" component={IndexersPage} />
         <Route path="/downloaders" component={DownloadersPage} />
+        <Route path="/settings/profiles" component={ArrPlaceholderPage} />
+        <Route path="/settings/media-management" component={ArrPlaceholderPage} />
+        <Route path="/settings/indexers" component={IndexersPage} />
+        <Route path="/settings/download-clients" component={DownloadersPage} />
+        <Route path="/settings/connect" component={ArrPlaceholderPage} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/system/status" component={ArrPlaceholderPage} />
+        <Route path="/system/tasks" component={ArrPlaceholderPage} />
+        <Route path="/system/logs" component={ArrPlaceholderPage} />
         <Route path="/library" component={LibraryPage} />
         <Route path="/calendar" component={CalendarPage} />
         <Route path="/wishlist" component={WishlistPage} />
+        <Route path="/wanted" component={WishlistPage} />
         <Route path="/xrel" component={XrelReleasesPage} />
         <Route path="/rss" component={RssPage} />
         <Route path="/stats" component={StatsPage} />
@@ -73,6 +87,19 @@ function App() {
   };
 
   const getPageTitle = (path: string) => {
+    if (path.startsWith("/activity/queue")) return "Queue";
+    if (path.startsWith("/activity/history")) return "History";
+    if (path.startsWith("/activity/blocklist")) return "Blocklist";
+    if (path.startsWith("/activity")) return "Activity";
+    if (path.startsWith("/settings/profiles")) return "Release Profiles";
+    if (path.startsWith("/settings/media-management")) return "Media Management";
+    if (path.startsWith("/settings/indexers")) return "Indexers";
+    if (path.startsWith("/settings/download-clients")) return "Download Clients";
+    if (path.startsWith("/settings/connect")) return "Connect";
+    if (path.startsWith("/system/status")) return "System Status";
+    if (path.startsWith("/system/tasks")) return "Tasks";
+    if (path.startsWith("/system/logs")) return "Logs";
+
     switch (path) {
       case "/":
         return "Dashboard";
@@ -82,6 +109,8 @@ function App() {
         return "Search";
       case "/downloads":
         return "Downloads";
+      case "/wanted":
+        return "Wanted";
       case "/indexers":
         return "Indexers";
       case "/downloaders":
