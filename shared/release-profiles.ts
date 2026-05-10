@@ -8,18 +8,32 @@ import {
 } from "./title-utils.js";
 
 export type ReleaseProtocolPreference = "torrent" | "usenet" | "either";
-export type ReleaseTitleMatch = "exact" | "contains" | "fuzzy" | "none";
+export type ReleaseTitleMatch = "exact" | "contains" | "fuzzy" | "mismatch" | "ambiguous-title";
+export type CustomFormatConditionType =
+  | "builtin"
+  | "title"
+  | "release_group"
+  | "category"
+  | "protocol";
+export type CustomFormatMatcherMode = "builtin" | "contains" | "exact" | "regex";
 
 export interface CustomFormat {
   id: string;
+  userId?: string | null;
   name: string;
   description: string;
+  conditionType: CustomFormatConditionType;
+  matcherMode: CustomFormatMatcherMode;
+  matcherValue: string;
   score: number;
   enabled: boolean;
+  hardReject: boolean;
+  builtIn: boolean;
 }
 
 export interface ReleaseProfile {
   id: string;
+  userId?: string | null;
   name: string;
   minScore: number;
   preferredPlatform: string | null;
@@ -52,6 +66,8 @@ export interface EvaluateReleaseInput {
   preferredPlatform?: string | null;
 }
 
+type ScoreAccumulator = Pick<ReleaseDecision, "matchedFormats"> & { score: number };
+
 export const DEFAULT_RELEASE_PROFILE: ReleaseProfile = {
   id: "default",
   name: "Default Game Releases",
@@ -69,72 +85,194 @@ export const DEFAULT_CUSTOM_FORMATS: CustomFormat[] = [
     id: "exact-title-match",
     name: "Exact game title",
     description: "The cleaned release title exactly matches the requested game title.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "exact-title-match",
     score: 100,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "contains-title-match",
     name: "Contains game title",
-    description: "The release title contains the requested game title as whole words.",
+    description: "The release title contains the requested game title without sequel drift.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "contains-title-match",
     score: 70,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "fuzzy-title-match",
+    name: "Fuzzy game title",
+    description: "The release title loosely matches the requested game title.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "fuzzy-title-match",
+    score: 35,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "newznab-games-category",
     name: "Games category",
     description: "The indexer returned a games category such as 4000 or a games subcategory.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "newznab-games-category",
     score: 35,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "pc-platform-signal",
     name: "PC or Windows marker",
     description: "The release title contains a PC, Windows, Win64, or x64 platform marker.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "pc-platform-signal",
     score: 25,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "storefront-or-drmfree-marker",
     name: "Storefront or DRM-free marker",
     description: "The release title contains a recognized storefront or DRM-free marker.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "storefront-or-drmfree-marker",
     score: 15,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
-    id: "main-edition-marker",
-    name: "Main edition marker",
-    description: "The release title contains edition wording commonly used for full game releases.",
-    score: 10,
+    id: "scene-release",
+    name: "Scene release",
+    description: "The release has a parsed release-group suffix that looks scene-style.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "scene-release",
+    score: 20,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "p2p-release",
+    name: "P2P release",
+    description: "The release title or group contains common P2P markers.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "p2p-release",
+    score: 8,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "repack-release",
+    name: "Repack",
+    description: "The release title includes a repack marker.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "repack-release",
+    score: 8,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "update-release",
+    name: "Update or patch",
+    description: "The release title includes update, patch, or hotfix wording.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "update-release",
+    score: 4,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "dlc-release",
+    name: "DLC or expansion",
+    description: "The release title includes DLC, expansion, or season pass wording.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "dlc-release",
+    score: 4,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "crackfix-release",
+    name: "Crackfix or hotfix",
+    description: "The release title includes crackfix, hotfix, or fixed wording.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "crackfix-release",
+    score: 3,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "usenet-health",
     name: "Usenet health",
     description: "The NZB has grab or file-count signals from the indexer.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "usenet-health",
     score: 10,
     enabled: true,
+    hardReject: false,
+    builtIn: true,
   },
   {
     id: "non-game-media",
     name: "Non-game media",
     description:
-      "The title looks like music, video, books, comics, manuals, or other non-game media.",
+      "The title looks like music, video, books, comics, manuals, trainers, or other non-game media.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "non-game-media",
     score: -120,
     enabled: true,
+    hardReject: true,
+    builtIn: true,
   },
   {
     id: "non-game-category",
     name: "Non-game category",
     description: "The indexer returned a category outside the games range.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "non-game-category",
     score: -60,
     enabled: true,
+    hardReject: true,
+    builtIn: true,
   },
   {
     id: "wrong-platform",
     name: "Wrong platform",
     description: "The release platform does not match the preferred platform.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "wrong-platform",
     score: -80,
     enabled: true,
+    hardReject: true,
+    builtIn: true,
   },
 ];
 
@@ -142,17 +280,59 @@ const NON_GAME_MEDIA_PATTERN =
   /\b(soundtrack|ost|flac|mp3|aac|ebook|pdf|epub|comic|cbr|cbz|movie|film|s\d{1,2}e\d{1,2}|1080p|2160p|720p|bluray|b[dr]rip|web[ .-]?dl|hdtv|x264|x265|hevc|manual|guide|wallpaper|artbook|trainer|cheat)\b/i;
 const PC_PLATFORM_PATTERN = /\b(pc|windows|win64|win32|x64|x86)\b/i;
 const STOREFRONT_PATTERN = /\b(gog|steam|epic|drm[ ._-]?free)\b/i;
-const MAIN_EDITION_PATTERN =
-  /\b(complete|deluxe|ultimate|definitive|goty|gold|remastered|remake)\b/i;
+const P2P_PATTERN = /\b(p2p|portable|g4u)\b/i;
+const REPACK_PATTERN = /\b(repack|repackaged|re-repack)\b/i;
+const UPDATE_PATTERN = /\b(update|patch|hotfix)\b/i;
+const DLC_PATTERN = /\b(dlc|expansion|season[ ._-]?pass|unlocker)\b/i;
+const CRACKFIX_PATTERN = /\b(crackfix|hotfix|fixed|fix)\b/i;
+const METADATA_ONLY_TITLE_TOKENS = new Set([
+  "edition",
+  "complete",
+  "deluxe",
+  "ultimate",
+  "definitive",
+  "goty",
+  "gold",
+  "remastered",
+  "remake",
+  "pc",
+  "windows",
+  "win64",
+  "win32",
+  "x64",
+  "x86",
+  "gog",
+  "steam",
+  "epic",
+  "drm",
+  "free",
+  "multi",
+  "repack",
+  "proper",
+  "update",
+  "patch",
+  "hotfix",
+]);
+
+function getFormat(formats: CustomFormat[], customFormatId: string): CustomFormat | undefined {
+  return formats.find(
+    (candidate) =>
+      candidate.enabled &&
+      (candidate.id === customFormatId ||
+        (candidate.conditionType === "builtin" && candidate.matcherValue === customFormatId))
+  );
+}
 
 function addScore(
-  decision: Pick<ReleaseDecision, "matchedFormats"> & { score: number },
+  decision: ScoreAccumulator,
+  formats: CustomFormat[],
   customFormatId: string
-) {
-  const format = DEFAULT_CUSTOM_FORMATS.find((candidate) => candidate.id === customFormatId);
-  if (!format?.enabled) return;
+): CustomFormat | undefined {
+  const format = getFormat(formats, customFormatId);
+  if (!format) return undefined;
   decision.score += format.score;
   decision.matchedFormats.push(format.name);
+  return format;
 }
 
 function hasGameCategory(categories: string[]): boolean {
@@ -164,32 +344,97 @@ function hasOnlyNonGameCategories(categories: string[]): boolean {
   return !hasGameCategory(categories);
 }
 
-function getTitleMatch(title: string, gameTitle: string): ReleaseTitleMatch {
+function tokenSequenceIndex(haystack: string[], needle: string[]): number {
+  if (needle.length === 0 || needle.length > haystack.length) return -1;
+  for (let i = 0; i <= haystack.length - needle.length; i++) {
+    if (needle.every((token, offset) => haystack[i + offset] === token)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function hasNumericToken(tokens: string[]): boolean {
+  return tokens.some((token) => /^\d+$/.test(token));
+}
+
+/**
+ * Classifies whether a release title is the requested game or a likely sequel/spin-off.
+ * Base-title requests are strict: "Dishonored" will not accept "Dishonored 2" or
+ * "Dishonored Death of the Outsider", while exact sequel/subtitle requests still pass.
+ */
+export function classifyReleaseTitleMatch(title: string, gameTitle: string): ReleaseTitleMatch {
   const normalizedGame = normalizeTitle(gameTitle);
   const normalizedTitle = normalizeTitle(title);
-  const normalizedCleanTitle = normalizeTitle(cleanReleaseName(title));
+  const cleanedRelease = cleanReleaseName(title);
+  const normalizedCleanTitle = normalizeTitle(cleanedRelease);
 
-  if (!normalizedGame || !normalizedTitle) return "none";
+  if (!normalizedGame || !normalizedTitle) return "mismatch";
   if (normalizedTitle === normalizedGame || normalizedCleanTitle === normalizedGame) return "exact";
 
-  const escapedGame = normalizedGame.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const gameWordsRegex = new RegExp(`\\b${escapedGame}\\b`, "i");
-  if (gameWordsRegex.test(normalizedTitle) || gameWordsRegex.test(normalizedCleanTitle)) {
+  const gameTokens = normalizedGame.split(" ").filter(Boolean);
+  const releaseTokens = normalizedCleanTitle.split(" ").filter(Boolean);
+  const sequenceIndex = tokenSequenceIndex(releaseTokens, gameTokens);
+
+  if (sequenceIndex >= 0) {
+    const extraTokens = [
+      ...releaseTokens.slice(0, sequenceIndex),
+      ...releaseTokens.slice(sequenceIndex + gameTokens.length),
+    ].filter((token) => !METADATA_ONLY_TITLE_TOKENS.has(token));
+
+    if (extraTokens.length === 0) return "contains";
+    if (hasNumericToken(extraTokens)) return "ambiguous-title";
+    if (!hasNumericToken(gameTokens)) return "ambiguous-title";
     return "contains";
   }
 
-  return releaseMatchesGame(title, gameTitle) ? "fuzzy" : "none";
+  return releaseMatchesGame(title, gameTitle) ? "fuzzy" : "mismatch";
 }
 
 function termIsPresent(title: string, term: string): boolean {
   return normalizeTitle(title).includes(normalizeTitle(term));
 }
 
+function textMatches(value: string | undefined, format: CustomFormat): boolean {
+  if (!value || !format.matcherValue) return false;
+  if (format.matcherMode === "regex") {
+    try {
+      return new RegExp(format.matcherValue, "i").test(value);
+    } catch {
+      return false;
+    }
+  }
+  const normalizedValue = normalizeTitle(value);
+  const normalizedMatcher = normalizeTitle(format.matcherValue);
+  if (format.matcherMode === "exact") return normalizedValue === normalizedMatcher;
+  return normalizedValue.includes(normalizedMatcher);
+}
+
+function categoryMatches(categories: string[], format: CustomFormat): boolean {
+  return categories.some((category) => textMatches(category, format));
+}
+
+function customFormatMatches(
+  format: CustomFormat,
+  input: EvaluateReleaseInput,
+  metadata: ReturnType<typeof parseReleaseMetadata>,
+  categories: string[]
+): boolean {
+  if (!format.enabled || format.conditionType === "builtin") return false;
+  if (format.conditionType === "title") return textMatches(input.title, format);
+  if (format.conditionType === "release_group") return textMatches(metadata.group, format);
+  if (format.conditionType === "category") return categoryMatches(categories, format);
+  if (format.conditionType === "protocol") return textMatches(input.downloadType, format);
+  return false;
+}
+
 export function evaluateRelease(
   input: EvaluateReleaseInput,
-  profile: ReleaseProfile = DEFAULT_RELEASE_PROFILE
+  profile: ReleaseProfile = DEFAULT_RELEASE_PROFILE,
+  customFormats: CustomFormat[] = DEFAULT_CUSTOM_FORMATS
 ): ReleaseDecision {
-  const titleMatch = getTitleMatch(input.title, input.gameTitle);
+  const formats = customFormats.length > 0 ? customFormats : DEFAULT_CUSTOM_FORMATS;
+  const titleMatch = classifyReleaseTitleMatch(input.title, input.gameTitle);
   const metadata = parseReleaseMetadata(input.title);
   const { category: releaseCategory } = categorizeDownload(input.title);
   const categories = input.category ?? [];
@@ -200,35 +445,47 @@ export function evaluateRelease(
     matchedFormats: [] as string[],
   };
 
-  if (titleMatch === "exact") addScore(decision, "exact-title-match");
-  else if (titleMatch === "contains") addScore(decision, "contains-title-match");
-  else if (titleMatch === "fuzzy") decision.score += 35;
-  else {
+  if (titleMatch === "exact") addScore(decision, formats, "exact-title-match");
+  else if (titleMatch === "contains") addScore(decision, formats, "contains-title-match");
+  else if (titleMatch === "fuzzy") addScore(decision, formats, "fuzzy-title-match");
+  else if (titleMatch === "ambiguous-title") {
+    decision.score -= 100;
+    rejectionReasons.push("Release appears to be a sequel or spin-off of the requested game");
+  } else {
     decision.score -= 100;
     rejectionReasons.push("Release title does not match the game title");
   }
 
-  if (hasGameCategory(categories)) addScore(decision, "newznab-games-category");
+  if (hasGameCategory(categories)) addScore(decision, formats, "newznab-games-category");
   if (hasOnlyNonGameCategories(categories)) {
-    addScore(decision, "non-game-category");
+    addScore(decision, formats, "non-game-category");
     rejectionReasons.push("Indexer category is not a games category");
   }
 
-  if (PC_PLATFORM_PATTERN.test(input.title)) addScore(decision, "pc-platform-signal");
-  if (STOREFRONT_PATTERN.test(input.title)) addScore(decision, "storefront-or-drmfree-marker");
-  if (MAIN_EDITION_PATTERN.test(input.title)) addScore(decision, "main-edition-marker");
+  if (PC_PLATFORM_PATTERN.test(input.title)) addScore(decision, formats, "pc-platform-signal");
+  if (STOREFRONT_PATTERN.test(input.title)) {
+    addScore(decision, formats, "storefront-or-drmfree-marker");
+  }
+  if (metadata.isScene) addScore(decision, formats, "scene-release");
+  if (P2P_PATTERN.test(input.title) || P2P_PATTERN.test(metadata.group ?? "")) {
+    addScore(decision, formats, "p2p-release");
+  }
+  if (REPACK_PATTERN.test(input.title)) addScore(decision, formats, "repack-release");
+  if (UPDATE_PATTERN.test(input.title)) addScore(decision, formats, "update-release");
+  if (DLC_PATTERN.test(input.title)) addScore(decision, formats, "dlc-release");
+  if (CRACKFIX_PATTERN.test(input.title)) addScore(decision, formats, "crackfix-release");
 
   if (input.downloadType === "usenet" && ((input.grabs ?? 0) > 0 || (input.files ?? 0) > 0)) {
-    addScore(decision, "usenet-health");
+    addScore(decision, formats, "usenet-health");
   }
 
   if (NON_GAME_MEDIA_PATTERN.test(input.title)) {
-    addScore(decision, "non-game-media");
+    addScore(decision, formats, "non-game-media");
     rejectionReasons.push("Release looks like non-game media or extras");
   }
 
   if (profilePlatform && !matchesPlatformFilter(metadata.platform, profilePlatform)) {
-    addScore(decision, "wrong-platform");
+    addScore(decision, formats, "wrong-platform");
     rejectionReasons.push(`Release platform does not match ${profilePlatform}`);
   }
 
@@ -254,6 +511,15 @@ export function evaluateRelease(
     }
   }
 
+  for (const format of formats) {
+    if (!customFormatMatches(format, input, metadata, categories)) continue;
+    decision.score += format.score;
+    decision.matchedFormats.push(format.name);
+    if (format.hardReject) {
+      rejectionReasons.push(`Blocked by custom format: ${format.name}`);
+    }
+  }
+
   if (input.downloadType === "torrent" && (input.seeders ?? 0) < profile.minSeeders) {
     decision.score -= 40;
     rejectionReasons.push(`Seeders below minimum: ${profile.minSeeders}`);
@@ -274,11 +540,17 @@ export function evaluateRelease(
   const hardRejected = rejectionReasons.some(
     (reason) =>
       reason === "Release title does not match the game title" ||
+      reason === "Release appears to be a sequel or spin-off of the requested game" ||
       reason === "Release looks like non-game media or extras" ||
       reason === "Indexer category is not a games category" ||
-      reason.startsWith("Release platform does not match")
+      reason.startsWith("Release platform does not match") ||
+      reason.startsWith("Blocked by custom format:")
   );
-  const accepted = titleMatch !== "none" && decision.score >= profile.minScore && !hardRejected;
+  const accepted =
+    titleMatch !== "mismatch" &&
+    titleMatch !== "ambiguous-title" &&
+    decision.score >= profile.minScore &&
+    !hardRejected;
   if (!accepted && decision.score < profile.minScore) {
     rejectionReasons.push(`Score ${decision.score} is below minimum ${profile.minScore}`);
   }
@@ -287,7 +559,7 @@ export function evaluateRelease(
     accepted,
     score: decision.score,
     rejectionReasons: Array.from(new Set(rejectionReasons)),
-    matchedFormats: decision.matchedFormats,
+    matchedFormats: Array.from(new Set(decision.matchedFormats)),
     normalizedTitle: normalizeTitle(cleanReleaseName(input.title)),
     releaseCategory,
     titleMatch,

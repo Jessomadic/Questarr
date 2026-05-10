@@ -70,12 +70,7 @@ import {
 } from "@shared/schema";
 import { groupDownloadsByCategory, type DownloadCategory } from "@shared/download-categorizer";
 import type { ReleaseDecision } from "@shared/release-profiles";
-import {
-  parseReleaseMetadata,
-  parseJsonStringArray,
-  matchesPlatformFilter,
-  normalizeTitle,
-} from "@shared/title-utils";
+import { parseReleaseMetadata, matchesPlatformFilter, normalizeTitle } from "@shared/title-utils";
 
 interface DownloadItem {
   title: string;
@@ -152,7 +147,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
     new Set(["main", "update", "dlc", "extra"] as DownloadCategory[])
   );
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
   // Tracks whether platform preselection has been applied this dialog session to prevent
   // re-applying it (and overriding the user's manual choice) if userSettings refetches.
@@ -173,7 +167,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     setSortOrder("desc");
     setShowFilters(false);
     setVisibleCategories(new Set(["main", "update", "dlc", "extra"] as DownloadCategory[]));
-    setSelectedGroups([]);
     setSelectedPlatforms([]);
     platformPreselectedRef.current = false;
     hasInvalidatedRef.current = false;
@@ -198,22 +191,11 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
         console.warn("Failed to apply download rules from settings", error);
       }
     }
-    if (userSettings?.filterByPreferredGroups) {
-      const groups = parseJsonStringArray(userSettings.preferredReleaseGroups);
-      if (groups.length > 0) {
-        setSelectedGroups(groups);
-      }
-    }
     if (userSettings?.preferredPlatform && !platformPreselectedRef.current) {
       setSelectedPlatforms([userSettings.preferredPlatform]);
       platformPreselectedRef.current = true;
     }
-  }, [
-    userSettings?.downloadRules,
-    userSettings?.filterByPreferredGroups,
-    userSettings?.preferredReleaseGroups,
-    userSettings?.preferredPlatform,
-  ]);
+  }, [userSettings?.downloadRules, userSettings?.preferredPlatform]);
 
   // Initialize search query only when the dialog opens or game changes — not on settings refetch.
   // Keeping this separate from applyDownloadRules prevents a settings re-fetch (e.g. on window
@@ -285,12 +267,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     return Array.from(indexers).sort();
   }, [searchResults?.items, enabledIndexers]);
 
-  const availableGroups = useMemo(() => {
-    if (!searchResults?.items) return [];
-    const groups = new Set(searchResults.items.map((item) => item.group).filter(Boolean));
-    return Array.from(groups).sort();
-  }, [searchResults?.items]);
-
   // Pre-calculate release metadata once per item to avoid repeated regex operations
   const itemsMetadata = useMemo(() => {
     if (!searchResults?.items) return new Map<string, ReturnType<typeof parseReleaseMetadata>>();
@@ -331,7 +307,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
       filtered[category] = downloads
         .filter((t) => meetsSeederThreshold(t))
         .filter((t) => selectedIndexer === "all" || t.indexerName === selectedIndexer)
-        .filter((t) => selectedGroups.length === 0 || (t.group && selectedGroups.includes(t.group)))
         .filter((t) => {
           if (selectedPlatforms.length === 0) return true;
           const platform = itemsMetadata.get(t.title)?.platform;
@@ -375,7 +350,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     sortBy,
     sortOrder,
     visibleCategories,
-    selectedGroups,
     selectedPlatforms,
   ]);
 
@@ -797,17 +771,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
               </div>
 
               <div className="space-y-2">
-                <Label className="text-sm">Release Groups</Label>
-                <MultiSelect
-                  options={availableGroups.map((g) => ({ label: g as string, value: g as string }))}
-                  selected={selectedGroups}
-                  onChange={setSelectedGroups}
-                  placeholder="Select groups..."
-                  className="w-full"
-                />
-              </div>
-
-              <div className="space-y-2">
                 <Label className="text-sm">Platform</Label>
                 <MultiSelect
                   options={availablePlatforms}
@@ -907,11 +870,6 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                         .filter((t) => meetsSeederThreshold(t))
                         .filter(
                           (t) => selectedIndexer === "all" || t.indexerName === selectedIndexer
-                        )
-                        .filter(
-                          (t) =>
-                            selectedGroups.length === 0 ||
-                            (t.group && selectedGroups.includes(t.group))
                         ).length
                     );
                   },

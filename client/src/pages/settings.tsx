@@ -42,11 +42,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, clearSearchCache } from "@/lib/queryClient";
 import AutoDownloadRulesSettings from "@/components/AutoDownloadRulesSettings";
-import PreferredReleaseGroupsSettings from "@/components/PreferredReleaseGroupsSettings";
+import ReleaseScoringSettings from "@/components/ReleaseScoringSettings";
 import PasswordSettings from "@/components/PasswordSettings";
 import type { Config, UserSettings, DownloadRules, ReleaseBlacklist } from "@shared/schema";
 import { downloadRulesSchema } from "@shared/schema";
-import { parseJsonStringArray, CANONICAL_PLATFORMS } from "@shared/title-utils";
+import { CANONICAL_PLATFORMS } from "@shared/title-utils";
 import { useState, useEffect, useRef, useMemo } from "react";
 
 interface CertInfo {
@@ -138,8 +138,6 @@ export default function SettingsPage() {
   const [igdbClientSecret, setIgdbClientSecret] = useState("");
   const [showClientSecret, setShowClientSecret] = useState(false);
   const [downloadRules, setDownloadRules] = useState<DownloadRules | null>(null);
-  const [preferredReleaseGroups, setPreferredReleaseGroups] = useState<string[]>([]);
-  const [filterByPreferredGroups, setFilterByPreferredGroups] = useState(false);
   const [preferredPlatform, setPreferredPlatform] = useState<string>("");
   const [xrelSceneReleases, setXrelSceneReleases] = useState(true);
   const [xrelP2pReleases, setXrelP2pReleases] = useState(false);
@@ -152,9 +150,9 @@ export default function SettingsPage() {
   // Sync with fetched settings
   useEffect(() => {
     if (userSettings) {
-      setAutoSearchEnabled(userSettings.autoSearchEnabled);
+      setAutoSearchEnabled(false);
       setAutoSearchUnreleased(userSettings.autoSearchUnreleased ?? false);
-      setAutoDownloadEnabled(userSettings.autoDownloadEnabled);
+      setAutoDownloadEnabled(false);
       setNotifyMultipleDownloads(userSettings.notifyMultipleDownloads);
       setNotifyUpdates(userSettings.notifyUpdates);
       setSearchIntervalHours(userSettings.searchIntervalHours);
@@ -173,8 +171,6 @@ export default function SettingsPage() {
       } else {
         setDownloadRules(null);
       }
-      setPreferredReleaseGroups(parseJsonStringArray(userSettings.preferredReleaseGroups));
-      setFilterByPreferredGroups(userSettings.filterByPreferredGroups ?? false);
       setPreferredPlatform(userSettings.preferredPlatform ?? "");
       setXrelSceneReleases(userSettings.xrelSceneReleases ?? true);
       setXrelP2pReleases(userSettings.xrelP2pReleases ?? false);
@@ -518,9 +514,9 @@ export default function SettingsPage() {
   const handleSaveAutoSearch = () => {
     updateSettingsMutation.mutate({
       updates: {
-        autoSearchEnabled,
+        autoSearchEnabled: false,
         autoSearchUnreleased,
-        autoDownloadEnabled,
+        autoDownloadEnabled: false,
         notifyMultipleDownloads,
         notifyUpdates,
         searchIntervalHours,
@@ -682,6 +678,14 @@ export default function SettingsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                <Alert>
+                  <ShieldAlert className="h-4 w-4" />
+                  <AlertTitle>Automation Paused</AlertTitle>
+                  <AlertDescription>
+                    Auto-search and auto-download are disabled while release scoring is being
+                    rebuilt. Manual search and manual downloads still work.
+                  </AlertDescription>
+                </Alert>
                 <div className="space-y-4">
                   {/* Auto Search Toggle */}
                   <div className="flex items-center justify-between">
@@ -693,11 +697,7 @@ export default function SettingsPage() {
                         Periodically search indexers for wanted games
                       </p>
                     </div>
-                    <Switch
-                      id="auto-search"
-                      checked={autoSearchEnabled}
-                      onCheckedChange={setAutoSearchEnabled}
-                    />
+                    <Switch id="auto-search" checked={false} disabled />
                   </div>
 
                   {/* Search Interval */}
@@ -804,8 +804,8 @@ export default function SettingsPage() {
                     Preferred Platform
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Pre-filter results to this platform in the download dialog and auto-search. PC
-                    also matches releases with no explicit platform tag.
+                    Pre-filter results to this platform in the download dialog. PC also matches
+                    releases with no explicit platform tag.
                   </p>
                   <Select
                     value={preferredPlatform || "__none__"}
@@ -854,12 +854,7 @@ export default function SettingsPage() {
               onChange={setDownloadRules}
               onReset={() => setDownloadRules(null)}
             />
-            <PreferredReleaseGroupsSettings
-              preferredGroups={preferredReleaseGroups}
-              filterByPreferredGroups={filterByPreferredGroups}
-              onGroupsChange={setPreferredReleaseGroups}
-              onFilterChange={setFilterByPreferredGroups}
-            />
+            <ReleaseScoringSettings />
           </TabsContent>
 
           <TabsContent value="services" className="space-y-6">

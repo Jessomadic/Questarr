@@ -5,8 +5,11 @@ import { searchLogger } from "./logger.js";
 import { parseReleaseMetadata } from "../shared/title-utils.js";
 import {
   DEFAULT_RELEASE_PROFILE,
+  DEFAULT_CUSTOM_FORMATS,
   evaluateRelease,
+  type CustomFormat,
   type ReleaseDecision,
+  type ReleaseProfile,
 } from "../shared/release-profiles.js";
 
 export interface SearchItem {
@@ -36,9 +39,12 @@ export interface SearchItem {
 
 export interface AggregatedSearchOptions {
   query: string;
+  gameTitle?: string;
   category?: string[];
   limit?: number;
   offset?: number;
+  releaseProfile?: ReleaseProfile;
+  customFormats?: CustomFormat[];
 }
 
 export interface AggregatedSearchResults {
@@ -183,17 +189,22 @@ export async function searchAllIndexers(
   }
 
   for (const item of combinedItems) {
-    item.releaseDecision = evaluateRelease({
-      title: item.title,
-      gameTitle: options.query,
-      category: item.category,
-      downloadType: item.downloadType,
-      size: item.size,
-      seeders: item.seeders,
-      grabs: item.grabs,
-      files: item.files,
-      preferredPlatform: DEFAULT_RELEASE_PROFILE.preferredPlatform,
-    });
+    item.releaseDecision = evaluateRelease(
+      {
+        title: item.title,
+        gameTitle: options.gameTitle ?? options.query,
+        category: item.category,
+        downloadType: item.downloadType,
+        size: item.size,
+        seeders: item.seeders,
+        grabs: item.grabs,
+        files: item.files,
+        preferredPlatform:
+          options.releaseProfile?.preferredPlatform ?? DEFAULT_RELEASE_PROFILE.preferredPlatform,
+      },
+      options.releaseProfile ?? DEFAULT_RELEASE_PROFILE,
+      options.customFormats ?? DEFAULT_CUSTOM_FORMATS
+    );
   }
 
   // Default sort: release decision, health, then date. This keeps likely game releases above

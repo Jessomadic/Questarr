@@ -14,6 +14,9 @@ import {
   insertDownloaderSchema,
   insertNotificationSchema,
   updateUserSettingsSchema,
+  updateReleaseProfileSchema,
+  insertCustomFormatSchema,
+  updateCustomFormatSchema,
   updatePasswordSchema,
   insertRssFeedSchema,
   insertReleaseBlacklistSchema,
@@ -161,19 +164,31 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       return res.status(400).json({ error: "Search query required" });
     }
 
+    const gameId = req.query.gameId as string | undefined;
+    const userId = req.user?.id;
+    const game = gameId ? await storage.getGame(gameId) : undefined;
+    const userOwnsGame = !!game && !!userId && game.userId === userId;
+    const [releaseProfile, customFormats] = userId
+      ? await Promise.all([
+          storage.getDefaultReleaseProfile?.(userId) ?? DEFAULT_RELEASE_PROFILE,
+          storage.getCustomFormats?.(userId) ?? DEFAULT_CUSTOM_FORMATS,
+        ])
+      : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
+
     const { items, total, errors } = await searchAllIndexers({
       query: query.trim(),
+      gameTitle: userOwnsGame ? game.title : query.trim(),
       category: categories,
       limit,
       offset,
+      releaseProfile,
+      customFormats,
     });
 
     // Filter out blacklisted releases when a gameId context is provided
-    const gameId = req.query.gameId as string | undefined;
     let filteredItems = items;
     let blacklistedCount = 0;
     if (gameId && req.user) {
-      const game = await storage.getGame(gameId);
       if (game && game.userId === req.user.id) {
         const [blacklisted, userSettings] = await Promise.all([
           storage.getReleaseBlacklistSet(gameId),
@@ -1822,15 +1837,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
     handleAggregatedIndexerSearch
   );
 
-  app.get("/api/release-profiles", (_req, res) => {
-    res.json([DEFAULT_RELEASE_PROFILE]);
+  app.get("/api/release-profiles", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      res.json(await storage.getReleaseProfiles(userId));
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching release profiles");
+      res.status(500).json({ error: "Failed to fetch release profiles" });
+    }
   });
 
-  app.get("/api/custom-formats", (_req, res) => {
-    res.json(DEFAULT_CUSTOM_FORMATS);
+  app.patch("/api/release-profiles/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const updates = updateReleaseProfileSchema.parse(req.body);
+      const profile = await storage.updateReleaseProfile(userId, req.params.id, updates);
+      if (!profile) return res.status(404).json({ error: "Release profile not found" });
+      res.json(profile);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res
+          .status(400)
+          .json({ error: "Invalid release profile data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error updating release profile");
+      res.status(500).json({ error: "Failed to update release profile" });
+    }
   });
 
-  app.post("/api/search/evaluate", (req, res) => {
+  app.get("/api/custom-formats", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      res.json(await storage.getCustomFormats(userId));
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching custom formats");
+      res.status(500).json({ error: "Failed to fetch custom formats" });
+    }
+  });
+
+  app.post("/api/custom-formats", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const format = insertCustomFormatSchema.parse(req.body);
+      res.status(201).json(await storage.addCustomFormat(userId, format));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid custom format data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error creating custom format");
+      res.status(500).json({ error: "Failed to create custom format" });
+    }
+  });
+
+  app.patch("/api/custom-formats/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const updates = updateCustomFormatSchema.parse(req.body);
+      const format = await storage.updateCustomFormat(userId, req.params.id, updates);
+      if (!format) return res.status(404).json({ error: "Custom format not found" });
+      res.json(format);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid custom format data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error updating custom format");
+      res.status(500).json({ error: "Failed to update custom format" });
+    }
+  });
+
+  app.delete("/api/custom-formats/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const removed = await storage.removeCustomFormat(userId, req.params.id);
+      if (!removed) return res.status(404).json({ error: "Custom format not found" });
+      res.status(204).send();
+    } catch (error) {
+      routesLogger.error({ error }, "error deleting custom format");
+      res.status(500).json({ error: "Failed to delete custom format" });
+    }
+  });
+
+  app.post("/api/search/evaluate", async (req, res) => {
     const schema = z.object({
       title: z.string().min(1),
       gameTitle: z.string().min(1),
@@ -1848,7 +1941,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Invalid release evaluation data" });
     }
 
-    res.json(evaluateRelease(parsed.data));
+    const userId = req.user?.id;
+    const [profile, formats] = userId
+      ? await Promise.all([
+          storage.getDefaultReleaseProfile(userId),
+          storage.getCustomFormats(userId),
+        ])
+      : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
+    res.json(evaluateRelease(parsed.data, profile, formats));
   });
 
   // Test indexer connection with provided configuration (doesn't require saving first)
@@ -2854,6 +2954,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create default settings if they don't exist
       if (!settings) {
         settings = await storage.createUserSettings({ userId });
+      }
+      await storage.ensureReleaseScoringDefaults?.(userId);
+      if (settings.autoSearchEnabled || settings.autoDownloadEnabled) {
+        settings = { ...settings, autoSearchEnabled: false, autoDownloadEnabled: false };
       }
 
       res.json(settings);

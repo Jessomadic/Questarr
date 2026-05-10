@@ -34,11 +34,55 @@ export const userSettings = sqliteTable("user_settings", {
     .notNull()
     .default(false),
   steamSyncFailures: integer("steam_sync_failures").notNull().default(0),
-  preferredReleaseGroups: text("preferred_release_groups"),
-  filterByPreferredGroups: integer("filter_by_preferred_groups", { mode: "boolean" })
-    .notNull()
-    .default(false),
   preferredPlatform: text("preferred_platform"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
+    sql`(strftime('%s', 'now') * 1000)`
+  ),
+});
+
+export const releaseProfiles = sqliteTable(
+  "release_profiles",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    minScore: integer("min_score").notNull().default(50),
+    preferredPlatform: text("preferred_platform"),
+    protocolPreference: text("protocol_preference").notNull().default("either"),
+    requiredTerms: text("required_terms", { mode: "json" }).$type<string[]>().default([]),
+    ignoredTerms: text("ignored_terms", { mode: "json" }).$type<string[]>().default([]),
+    minSeeders: integer("min_seeders").notNull().default(0),
+    maxSize: integer("max_size"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+      sql`(strftime('%s', 'now') * 1000)`
+    ),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
+      sql`(strftime('%s', 'now') * 1000)`
+    ),
+  },
+  (t) => [uniqueIndex("release_profiles_user_default_idx").on(t.userId, t.isDefault)]
+);
+
+export const customFormats = sqliteTable("custom_formats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  conditionType: text("condition_type").notNull(),
+  matcherMode: text("matcher_mode").notNull(),
+  matcherValue: text("matcher_value").notNull().default(""),
+  score: integer("score").notNull().default(0),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  hardReject: integer("hard_reject", { mode: "boolean" }).notNull().default(false),
+  builtIn: integer("built_in", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+    sql`(strftime('%s', 'now') * 1000)`
+  ),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
     sql`(strftime('%s', 'now') * 1000)`
   ),
@@ -355,6 +399,33 @@ export const updateUserSettingsSchema = createInsertSchema(userSettings)
   })
   .partial();
 
+export const releaseProfileSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  minScore: z.number().int().default(50),
+  preferredPlatform: z.string().nullable().optional(),
+  protocolPreference: z.enum(["torrent", "usenet", "either"]).default("either"),
+  requiredTerms: z.array(z.string()).default([]),
+  ignoredTerms: z.array(z.string()).default([]),
+  minSeeders: z.number().int().min(0).default(0),
+  maxSize: z.number().int().min(0).nullable().optional(),
+});
+
+export const updateReleaseProfileSchema = releaseProfileSchema.partial();
+
+export const insertCustomFormatSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  description: z.string().default(""),
+  conditionType: z.enum(["builtin", "title", "release_group", "category", "protocol"]),
+  matcherMode: z.enum(["builtin", "contains", "exact", "regex"]),
+  matcherValue: z.string().default(""),
+  score: z.number().int().default(0),
+  enabled: z.boolean().default(true),
+  hardReject: z.boolean().default(false),
+  builtIn: z.boolean().default(false),
+});
+
+export const updateCustomFormatSchema = insertCustomFormatSchema.partial();
+
 export const updatePasswordSchema = z
   .object({
     currentPassword: z.string().trim().min(1, "Current password is required"),
@@ -404,6 +475,12 @@ export type InsertNotification = (typeof insertNotificationSchema)["_output"];
 export type UserSettings = typeof userSettings.$inferSelect;
 export type InsertUserSettings = (typeof insertUserSettingsSchema)["_output"];
 export type UpdateUserSettings = (typeof updateUserSettingsSchema)["_output"];
+export type ReleaseProfileRow = typeof releaseProfiles.$inferSelect;
+export type InsertReleaseProfile = (typeof releaseProfileSchema)["_output"];
+export type UpdateReleaseProfile = (typeof updateReleaseProfileSchema)["_output"];
+export type CustomFormatRow = typeof customFormats.$inferSelect;
+export type InsertCustomFormat = (typeof insertCustomFormatSchema)["_output"];
+export type UpdateCustomFormat = (typeof updateCustomFormatSchema)["_output"];
 
 export interface DownloadSummary {
   topStatus: "downloading" | "paused" | "failed" | "completed";

@@ -317,7 +317,7 @@ describe("MemStorage", () => {
 
       const settings = await storage.createUserSettings(settingsData);
       expect(settings.userId).toBe(user.id);
-      expect(settings.autoSearchEnabled).toBe(true);
+      expect(settings.autoSearchEnabled).toBe(false);
       expect(settings.autoSearchUnreleased).toBe(true);
 
       // Test update
@@ -326,7 +326,7 @@ describe("MemStorage", () => {
       });
 
       expect(updated?.autoSearchUnreleased).toBe(false);
-      expect(updated?.autoSearchEnabled).toBe(true); // Should remain unchanged
+      expect(updated?.autoSearchEnabled).toBe(false);
     });
 
     it("should use default values for new settings", async () => {
@@ -341,7 +341,7 @@ describe("MemStorage", () => {
       });
 
       expect(settings.autoSearchUnreleased).toBe(false); // Default is false
-      expect(settings.autoSearchEnabled).toBe(true); // Default is true
+      expect(settings.autoSearchEnabled).toBe(false); // Automation is intentionally disabled
     });
 
     it("should persist and retrieve preferredPlatform", async () => {
