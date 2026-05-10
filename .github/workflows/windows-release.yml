@@ -13,6 +13,8 @@ on:
         default: false
         type: boolean
   push:
+    branches:
+      - main
     tags:
       - "v*"
   release:
@@ -26,6 +28,7 @@ jobs:
   build-windows-installer:
     name: Build Windows x64 installer
     runs-on: windows-latest
+    if: ${{ github.event_name != 'release' || github.actor != 'github-actions[bot]' }}
 
     env:
       NODE_VERSION: 22.x
