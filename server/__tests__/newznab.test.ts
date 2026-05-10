@@ -186,6 +186,88 @@ describe("NewznabClient", () => {
       );
     });
 
+    it("should try API-host root caps URLs when /api caps fails", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () => mockCapsXml,
+        });
+
+      const categories = await newznabClient.getCategories({
+        ...mockIndexer,
+        url: "http://api.example.com/api",
+      });
+
+      expect(categories).toEqual(expect.arrayContaining([{ id: "4050", name: "PC > Games" }]));
+      expect(safeFetch).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining("http://api.example.com/api?"),
+        expect.any(Object)
+      );
+      expect(safeFetch).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining("http://api.example.com/?"),
+        expect.any(Object)
+      );
+    });
+
+    it("should try explicit XML caps output when default caps fails", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () => mockCapsXml,
+        });
+
+      const categories = await newznabClient.getCategories(mockIndexer);
+
+      expect(categories).toEqual(expect.arrayContaining([{ id: "1000", name: "Console" }]));
+      expect(safeFetch).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining("o=xml"),
+        expect.any(Object)
+      );
+    });
+
+    it("should parse JSON caps categories", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            caps: {
+              categories: [
+                {
+                  id: "4000",
+                  name: "PC",
+                  subcat: [{ id: "4050", name: "Games" }],
+                },
+              ],
+            },
+          }),
+      });
+
+      const categories = await newznabClient.getCategories(mockIndexer);
+
+      expect(categories).toEqual([
+        { id: "4000", name: "PC" },
+        { id: "4050", name: "PC > Games" },
+      ]);
+    });
+
     it("should return default game categories when caps has no categories", async () => {
       (isSafeUrl as Mock).mockResolvedValue(true);
       (safeFetch as Mock).mockResolvedValue({
@@ -222,6 +304,27 @@ describe("NewznabClient", () => {
       const result = await newznabClient.testConnection(mockIndexer);
       expect(result.success).toBe(true);
       expect(result.message).toBe("Connection successful");
+    });
+
+    it("should test connection against fallback caps URLs", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          text: async () => mockCapsXml,
+        });
+
+      const result = await newznabClient.testConnection({
+        ...mockIndexer,
+        url: "http://api.example.com/api",
+      });
+
+      expect(result.success).toBe(true);
+      expect(safeFetch).toHaveBeenCalledTimes(2);
     });
 
     it("should handle failed HTTP response", async () => {
