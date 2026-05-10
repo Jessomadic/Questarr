@@ -168,6 +168,16 @@ describe("LibraryPage filter buttons", () => {
     searchResultsAvailable: true,
   };
 
+  const hiddenGame = {
+    id: "44444444-4444-4444-4444-444444444444",
+    title: "Hidden Game",
+    status: "owned",
+    hidden: true,
+    releaseDate: null,
+    addedAt: new Date().toISOString(),
+    searchResultsAvailable: false,
+  };
+
   beforeEach(() => {
     localStorage.clear();
     gameGridSpy.mockClear();
@@ -184,7 +194,7 @@ describe("LibraryPage filter buttons", () => {
       }
       return Promise.resolve({
         ok: true,
-        json: async () => [gameWithDownload, gameWithSearchResult],
+        json: async () => [gameWithDownload, gameWithSearchResult, hiddenGame],
       } as Response);
     });
   });
@@ -206,6 +216,27 @@ describe("LibraryPage filter buttons", () => {
       const lastGames = calls[calls.length - 1]?.[0]?.games;
       expect(lastGames).toHaveLength(1);
       expect(lastGames[0].id).toBe(TEST_GAME_ID);
+    });
+  });
+
+  it("filters to hidden games when hidden button toggled", async () => {
+    renderWithQueryClient(<LibraryPage />);
+
+    await waitFor(() => {
+      const calls = gameGridSpy.mock.calls;
+      const lastGames = calls[calls.length - 1]?.[0]?.games;
+      expect(lastGames).toHaveLength(2);
+      expect(lastGames.every((game: { hidden: boolean }) => !game.hidden)).toBe(true);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show hidden games only" }));
+
+    await waitFor(() => {
+      const calls = gameGridSpy.mock.calls;
+      const lastGames = calls[calls.length - 1]?.[0]?.games;
+      expect(lastGames).toHaveLength(1);
+      expect(lastGames[0].id).toBe("44444444-4444-4444-4444-444444444444");
+      expect(lastGames[0].hidden).toBe(true);
     });
   });
 
