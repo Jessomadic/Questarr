@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { newznabClient } from "../newznab.js";
+import { DEFAULT_NEWZNAB_GAME_CATEGORIES, newznabClient } from "../newznab.js";
 
 vi.mock("../ssrf.js", () => ({
   isSafeUrl: vi.fn(),
@@ -156,6 +156,10 @@ describe("NewznabClient", () => {
 
       const categories = await newznabClient.getCategories(mockIndexer);
 
+      expect(safeFetch).toHaveBeenCalledWith(
+        expect.stringContaining("http://example.com/api?"),
+        expect.any(Object)
+      );
       expect(categories.length).toBe(5); // 1000, 1010, 1020, 4000, 4050
       expect(categories).toEqual(
         expect.arrayContaining([
@@ -165,6 +169,45 @@ describe("NewznabClient", () => {
           { id: "4000", name: "PC" },
         ])
       );
+    });
+
+    it("should append /api for saved Newznab root URLs", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: true,
+        text: async () => mockCapsXml,
+      });
+
+      await newznabClient.getCategories({ ...mockIndexer, url: "http://example.com" });
+
+      expect(safeFetch).toHaveBeenCalledWith(
+        expect.stringContaining("http://example.com/api?"),
+        expect.any(Object)
+      );
+    });
+
+    it("should return default game categories when caps has no categories", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: true,
+        text: async () => '<?xml version="1.0" encoding="UTF-8"?><caps><server /></caps>',
+      });
+
+      const categories = await newznabClient.getCategories(mockIndexer);
+
+      expect(categories).toEqual(DEFAULT_NEWZNAB_GAME_CATEGORIES);
+    });
+
+    it("should return default game categories when caps fetch fails", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: false,
+        status: 500,
+      });
+
+      const categories = await newznabClient.getCategories(mockIndexer);
+
+      expect(categories).toEqual(DEFAULT_NEWZNAB_GAME_CATEGORIES);
     });
   });
 

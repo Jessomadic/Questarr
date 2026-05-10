@@ -43,6 +43,39 @@ export interface NewznabCategory {
   name: string;
 }
 
+export const DEFAULT_NEWZNAB_GAME_CATEGORIES: NewznabCategory[] = [
+  { id: "4000", name: "PC" },
+  { id: "4050", name: "PC > Games" },
+  { id: "1000", name: "Console" },
+  { id: "1010", name: "Console > NDS" },
+  { id: "1020", name: "Console > PSP" },
+  { id: "1030", name: "Console > Wii" },
+  { id: "1040", name: "Console > Xbox" },
+  { id: "1050", name: "Console > Xbox 360" },
+  { id: "1080", name: "Console > PlayStation 3" },
+  { id: "1110", name: "Console > Nintendo 3DS" },
+  { id: "1120", name: "Console > PlayStation Vita" },
+  { id: "1130", name: "Console > Wii U" },
+  { id: "1140", name: "Console > Xbox One" },
+  { id: "1180", name: "Console > PlayStation 4" },
+];
+
+function buildNewznabApiUrl(indexer: Indexer, apiFunction: string): URL {
+  const url = new URL(indexer.url);
+  const pathSegments = url.pathname
+    .split("/")
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!pathSegments.includes("api")) {
+    url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
+  }
+
+  url.searchParams.set("apikey", indexer.apiKey);
+  url.searchParams.set("t", apiFunction);
+  return url;
+}
+
 class NewznabClient {
   /**
    * Search a single Newznab indexer
@@ -54,15 +87,7 @@ class NewznabClient {
         throw new Error(`Unsafe URL detected: ${indexer.url}`);
       }
 
-      const url = new URL(indexer.url);
-      // Don't modify pathname if it already contains 'api'
-      if (!url.pathname.includes("/api")) {
-        url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      }
-
-      // Build Newznab search parameters
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "search"); // Newznab search function
+      const url = buildNewznabApiUrl(indexer, "search");
       url.searchParams.set("q", params.query);
 
       if (params.category && params.category.length > 0) {
@@ -312,10 +337,7 @@ class NewznabClient {
         throw new Error(`Unsafe URL detected: ${indexer.url}`);
       }
 
-      const url = new URL(indexer.url);
-      url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "caps"); // Get capabilities
+      const url = buildNewznabApiUrl(indexer, "caps");
 
       const response = await safeFetch(url.toString(), {
         signal: AbortSignal.timeout(10000),
@@ -327,6 +349,11 @@ class NewznabClient {
 
       const xmlText = await response.text();
       const data = parser.parse(xmlText);
+
+      if (data.error) {
+        const description = data.error["@_description"] || data.error["@_code"] || "unknown error";
+        throw new Error(`Newznab caps error: ${description}`);
+      }
 
       const categories: NewznabCategory[] = [];
 
@@ -358,10 +385,21 @@ class NewznabClient {
         }
       }
 
-      return categories;
+      if (categories.length > 0) {
+        return categories;
+      }
+
+      routesLogger.warn(
+        { indexer: indexer.name },
+        "newznab caps returned no categories; using default game categories"
+      );
+      return DEFAULT_NEWZNAB_GAME_CATEGORIES;
     } catch (error) {
-      routesLogger.error({ indexer: indexer.name, error }, "failed to get newznab categories");
-      throw error;
+      routesLogger.warn(
+        { indexer: indexer.name, error },
+        "failed to get newznab categories; using default game categories"
+      );
+      return DEFAULT_NEWZNAB_GAME_CATEGORIES;
     }
   }
 
@@ -374,10 +412,7 @@ class NewznabClient {
         return { success: false, message: "Unsafe URL detected" };
       }
 
-      const url = new URL(indexer.url);
-      url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "caps");
+      const url = buildNewznabApiUrl(indexer, "caps");
 
       const response = await safeFetch(url.toString(), {
         signal: AbortSignal.timeout(10000),
