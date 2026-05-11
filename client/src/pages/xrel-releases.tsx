@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
+  Copy,
   ExternalLink,
   FilterX,
   Loader2,
@@ -235,14 +236,22 @@ export default function XrelReleasesPage() {
     setSubmittedSearch(searchInput.trim());
   }
 
+  async function copyReleaseName(dirname: string) {
+    await navigator.clipboard.writeText(dirname);
+    toast({
+      title: "Release name copied",
+      description: "Use the exact xREL dirname when searching Usenet or torrent indexers.",
+    });
+  }
+
   return (
     <div className="h-full overflow-auto p-6">
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">xREL.to Releases</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            Browse scene and P2P game releases from xREL.to with category, archive, and search
-            controls.
+            Browse xREL.to PreDB entries for exact release names, NFO context, release dates, and
+            technical metadata. xREL does not provide downloads, NZBs, torrents, or DDL links.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 pt-1">
@@ -267,13 +276,16 @@ export default function XrelReleasesPage() {
             <div>
               <CardTitle className="text-base">Release browser</CardTitle>
               <CardDescription>
-                Uses public xREL API endpoints for latest, P2P, category, archive, and release
-                search data.
+                Use these verified dirnames as reference terms for your configured indexers or
+                public Usenet search engines.
               </CardDescription>
             </div>
-            <Badge variant="outline" className="uppercase">
-              {isSearchMode ? "search" : source}
-            </Badge>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">PreDB only</Badge>
+              <Badge variant="outline" className="uppercase">
+                {isSearchMode ? "search" : source}
+              </Badge>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -536,6 +548,21 @@ export default function XrelReleasesPage() {
                               Add
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 gap-1"
+                            onClick={() => copyReleaseName(rel.dirname)}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            Copy
+                          </Button>
+                          <Button variant="ghost" size="sm" asChild className="h-8 gap-1">
+                            <a href={`/search?q=${encodeURIComponent(rel.dirname)}`}>
+                              <Search className="h-3.5 w-3.5" />
+                              Find
+                            </a>
+                          </Button>
                           <Button variant="outline" size="sm" asChild className="h-8 gap-1">
                             <a
                               href={safeUrl(rel.link_href)}

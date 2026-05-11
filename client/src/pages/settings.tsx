@@ -1144,8 +1144,9 @@ export default function SettingsPage() {
                   <CardTitle className="text-lg">xREL.to</CardTitle>
                 </div>
                 <CardDescription>
-                  Alert when a wanted game appears on xREL.to (scene/P2P release list). API base URL
-                  and search options for the auto-check.
+                  Alert when a wanted game appears on xREL.to's informational PreDB. xREL provides
+                  release names, NFO context, and metadata only, not downloads, NZBs, torrents, or
+                  DDL links.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -1177,7 +1178,7 @@ export default function SettingsPage() {
                         Include scene releases
                       </Label>
                       <p className="text-xs text-muted-foreground">
-                        Search scene releases when checking for wanted games on xREL.to
+                        Check scene PreDB entries when looking for wanted games on xREL.to
                       </p>
                     </div>
                     <Switch
@@ -1192,7 +1193,7 @@ export default function SettingsPage() {
                         Include P2P releases
                       </Label>
                       <p className="text-xs text-muted-foreground">
-                        Search P2P releases when checking for wanted games on xREL.to
+                        Check P2P PreDB entries when looking for wanted games on xREL.to
                       </p>
                     </div>
                     <Switch
