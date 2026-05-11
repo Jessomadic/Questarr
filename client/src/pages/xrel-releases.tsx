@@ -96,6 +96,27 @@ function formatSize(mb?: number, unit?: string): string {
   return `${mb} ${unit || "MB"}`;
 }
 
+function releaseSizeToBytes(size?: number, unit?: string): number | undefined {
+  if (size == null || !Number.isFinite(size) || size <= 0) return undefined;
+  const normalizedUnit = unit?.toUpperCase() ?? "MB";
+  const multiplier =
+    normalizedUnit === "TB"
+      ? 1024 ** 4
+      : normalizedUnit === "GB"
+        ? 1024 ** 3
+        : normalizedUnit === "KB"
+          ? 1024
+          : 1024 ** 2;
+  return Math.round(size * multiplier);
+}
+
+function buildIndexerSearchUrl(release: XrelRelease): string {
+  const params = new URLSearchParams({ q: release.dirname });
+  const expectedSize = releaseSizeToBytes(release.sizeMb, release.sizeUnit);
+  if (expectedSize) params.set("expectedSize", String(expectedSize));
+  return `/search?${params.toString()}`;
+}
+
 function safeUrl(url: string | undefined): string {
   if (!url) return "#";
   try {
@@ -581,7 +602,7 @@ export default function XrelReleasesPage() {
                             Copy
                           </Button>
                           <Button variant="ghost" size="sm" asChild className="h-8 gap-1">
-                            <a href={`/search?q=${encodeURIComponent(rel.dirname)}`}>
+                            <a href={buildIndexerSearchUrl(rel)}>
                               <Search className="h-3.5 w-3.5" />
                               Find
                             </a>

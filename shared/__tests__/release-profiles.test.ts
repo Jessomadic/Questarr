@@ -214,6 +214,52 @@ describe("release profile evaluation", () => {
     expect(decision.matchedFormats).toContain("Games newsgroup");
   });
 
+  it("does not penalize releases within twenty percent of the expected size", () => {
+    const expectedSize = 50 * 1024 ** 3;
+    const decision = evaluateRelease({
+      title: "Test.Game.PC-GROUP",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      size: expectedSize * 1.2,
+      expectedSize,
+      grabs: 10,
+    });
+
+    expect(decision.accepted).toBe(true);
+    expect(decision.matchedFormats).not.toContain("Expected size mismatch");
+    expect(decision.rejectionReasons.join(" ")).not.toContain("Release size differs");
+  });
+
+  it("massively downranks releases more than twenty percent away from the expected size", () => {
+    const expectedSize = 50 * 1024 ** 3;
+    const matchingSize = evaluateRelease({
+      title: "Test.Game.PC-GROUP",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      size: expectedSize,
+      expectedSize,
+      grabs: 10,
+    });
+    const wrongSize = evaluateRelease({
+      title: "Test.Game.PC-GROUP",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      size: expectedSize * 1.25,
+      expectedSize,
+      grabs: 10,
+    });
+
+    expect(wrongSize.accepted).toBe(false);
+    expect(wrongSize.score).toBeLessThanOrEqual(matchingSize.score - 150);
+    expect(wrongSize.matchedFormats).toContain("Expected size mismatch");
+    expect(wrongSize.rejectionReasons).toContain(
+      "Release size differs from expected by 25% (limit 20%)"
+    );
+  });
+
   it("allows uploader custom formats to match poster emails", () => {
     const decision = evaluateRelease(
       {

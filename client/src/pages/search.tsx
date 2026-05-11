@@ -4,6 +4,7 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { queryClient } from "@/lib/queryClient";
 import { formatBytes, formatAge, isUsenetItem, getDownloadTypeColor } from "@/lib/downloads-utils";
 import { cleanReleaseName } from "@shared/title-utils";
+import type { ReleaseDecision } from "@shared/release-profiles";
 import { Search, Download, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +43,7 @@ interface DownloadItem {
   link: string;
   pubDate: string;
   description?: string;
-  category?: string;
+  category?: string | string[];
   size?: number;
   seeders?: number;
   leechers?: number;
@@ -57,6 +58,7 @@ interface DownloadItem {
   age?: number;
   poster?: string;
   group?: string;
+  releaseDecision?: ReleaseDecision;
 }
 
 interface SearchResult {
@@ -90,36 +92,56 @@ function formatDate(dateString: string): string {
   }
 }
 
+function sortSearchItems(a: DownloadItem, b: DownloadItem): number {
+  const acceptedDelta =
+    Number(b.releaseDecision?.accepted ?? false) - Number(a.releaseDecision?.accepted ?? false);
+  if (acceptedDelta !== 0) return acceptedDelta;
+
+  const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+  if (scoreDelta !== 0) return scoreDelta;
+
+  const healthA = isUsenetItem(a) ? (a.grabs ?? 0) : (a.seeders ?? 0);
+  const healthB = isUsenetItem(b) ? (b.grabs ?? 0) : (b.seeders ?? 0);
+  if (healthB !== healthA) return healthB - healthA;
+
+  return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();
+}
+
 export default function SearchPage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("q") ?? "";
   });
+  const [expectedSizeParam] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("expectedSize") ?? "";
+  });
   const debouncedSearchQuery = useDebounce(searchQuery, 500);
   const [selectedDownload, setSelectedDownload] = useState<DownloadItem | null>(null);
   const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);
   const lastSearchQueryRef = useRef("");
+  const expectedSizeBytes = useMemo(() => {
+    const parsed = Number(expectedSizeParam);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }, [expectedSizeParam]);
+  const searchUrl = useMemo(() => {
+    const params = new URLSearchParams({ query: debouncedSearchQuery });
+    if (expectedSizeBytes) params.set("expectedSize", String(expectedSizeBytes));
+    return `/api/search?${params.toString()}`;
+  }, [debouncedSearchQuery, expectedSizeBytes]);
 
   const {
     data: searchResults,
     isLoading: isSearching,
     error: searchError,
   } = useQuery<SearchResult>({
-    queryKey: [`/api/search?query=${encodeURIComponent(debouncedSearchQuery)}`],
+    queryKey: [searchUrl],
     enabled: debouncedSearchQuery.trim().length > 0,
   });
 
-  // ⚡ Bolt: Memoize the sorted search results to avoid O(n log n) date parsing
-  // and sorting on every render when interacting with the search page state
-  // (like opening the download dialog or typing). Dates are pre-parsed into
-  // timestamps once per item before sorting to avoid redundant Date instantiations
-  // inside the comparator.
   const sortedItems = useMemo(() => {
-    return (searchResults?.items || [])
-      .map((item) => ({ item, time: new Date(item.pubDate).getTime() }))
-      .sort((a, b) => b.time - a.time)
-      .map(({ item }) => item);
+    return [...(searchResults?.items || [])].sort(sortSearchItems);
   }, [searchResults?.items]);
 
   // Show toast notification when search completes
@@ -296,6 +318,13 @@ export default function SearchPage() {
           )}
         </Button>
       </form>
+
+      {expectedSizeBytes && (
+        <div className="mb-4 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          Scoring against expected size:{" "}
+          <span className="font-medium text-foreground">{formatBytes(expectedSizeBytes)}</span>
+        </div>
+      )}
 
       {/* Search Results */}
       {searchError && (

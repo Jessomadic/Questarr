@@ -275,11 +275,13 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
     // Use validated values from middleware (already converted to integers by .toInt())
     const limit = (req.query.limit as unknown as number) || 50;
     const offset = (req.query.offset as unknown as number) || 0;
+    const expectedSize =
+      typeof req.query.expectedSize === "string" ? Number(req.query.expectedSize) : undefined;
 
     const categories = parseCategories(category || cat);
 
     routesLogger.info(
-      { query, categories, limit, offset },
+      { query, categories, limit, offset, expectedSize },
       "Handling aggregated indexer search request"
     );
 
@@ -305,6 +307,10 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       categoryWasExplicit: categories !== undefined,
       limit,
       offset,
+      expectedSize:
+        expectedSize != null && Number.isFinite(expectedSize) && expectedSize > 0
+          ? expectedSize
+          : undefined,
       releaseProfile,
       customFormats,
     });
@@ -2130,6 +2136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       uploader: z.string().optional(),
       group: z.string().optional(),
       preferredPlatform: z.string().nullable().optional(),
+      expectedSize: z.number().positive().optional(),
     });
 
     const parsed = schema.safeParse(req.body);

@@ -68,6 +68,7 @@ export interface AggregatedSearchOptions {
   offset?: number;
   releaseProfile?: ReleaseProfile;
   customFormats?: CustomFormat[];
+  expectedSize?: number;
 }
 
 export interface AggregatedSearchResults {
@@ -358,6 +359,7 @@ export async function searchAllIndexers(
         poster: item.poster,
         uploader: item.uploader,
         group: item.group,
+        expectedSize: options.expectedSize,
         preferredPlatform:
           options.releaseProfile?.preferredPlatform ?? DEFAULT_RELEASE_PROFILE.preferredPlatform,
       },

@@ -76,6 +76,7 @@ export interface ReleaseDecision {
   normalizedTitle: string;
   releaseCategory: DownloadCategory;
   titleMatch: ReleaseTitleMatch;
+  sizeDeltaPercent?: number;
 }
 
 export interface EvaluateReleaseInput {
@@ -91,6 +92,7 @@ export interface EvaluateReleaseInput {
   group?: string;
   uploader?: string;
   preferredPlatform?: string | null;
+  expectedSize?: number;
 }
 
 type ScoreAccumulator = Pick<ReleaseDecision, "matchedFormats"> & { score: number };
@@ -289,6 +291,19 @@ export const DEFAULT_CUSTOM_FORMATS: CustomFormat[] = [
     builtIn: true,
   },
   {
+    id: "expected-size-mismatch",
+    name: "Expected size mismatch",
+    description:
+      "The release size differs from the expected or verified release size by more than 20%.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "expected-size-mismatch",
+    score: -150,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
     id: "non-game-media",
     name: "Non-game media",
     description:
@@ -387,6 +402,26 @@ function addScore(
   decision.score += format.score;
   decision.matchedFormats.push(format.name);
   return format;
+}
+
+function addScoreOrFallback(
+  decision: ScoreAccumulator,
+  formats: CustomFormat[],
+  customFormatId: string,
+  fallbackName: string,
+  fallbackScore: number
+): void {
+  if (addScore(decision, formats, customFormatId)) return;
+  decision.score += fallbackScore;
+  decision.matchedFormats.push(fallbackName);
+}
+
+function getSizeDeltaPercent(
+  size: number | undefined,
+  expectedSize: number | undefined
+): number | undefined {
+  if (size == null || expectedSize == null || size <= 0 || expectedSize <= 0) return undefined;
+  return (Math.abs(size - expectedSize) / expectedSize) * 100;
 }
 
 const GAME_CATEGORY_LABEL_PATTERN = /\b(?:game|games)\b/i;
@@ -552,6 +587,7 @@ export function evaluateRelease(
   const { category: releaseCategory } = categorizeDownload(input.title);
   const categories = input.category ?? [];
   const profilePlatform = input.preferredPlatform ?? profile.preferredPlatform;
+  const sizeDeltaPercent = getSizeDeltaPercent(input.size, input.expectedSize);
   const rejectionReasons: string[] = [];
   const decision = {
     score: 0,
@@ -649,6 +685,13 @@ export function evaluateRelease(
     rejectionReasons.push("Release is larger than profile maximum size");
   }
 
+  if (sizeDeltaPercent != null && sizeDeltaPercent > 20) {
+    addScoreOrFallback(decision, formats, "expected-size-mismatch", "Expected size mismatch", -150);
+    rejectionReasons.push(
+      `Release size differs from expected by ${Math.round(sizeDeltaPercent)}% (limit 20%)`
+    );
+  }
+
   if (releaseCategory === "extra") {
     decision.score -= 35;
     if (!rejectionReasons.includes("Release looks like non-game media or extras")) {
@@ -682,5 +725,6 @@ export function evaluateRelease(
     normalizedTitle: normalizeTitle(cleanReleaseName(input.title)),
     releaseCategory,
     titleMatch,
+    ...(sizeDeltaPercent != null ? { sizeDeltaPercent } : {}),
   };
 }

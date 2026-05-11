@@ -146,6 +146,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
   const [sortBy, setSortBy] = useState<"score" | "seeders" | "date" | "size">("score");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [showFilters, setShowFilters] = useState(false);
+  const [expectedSizeGb, setExpectedSizeGb] = useState("");
   const [visibleCategories, setVisibleCategories] = useState<Set<DownloadCategory>>(
     new Set(["main", "update", "dlc", "extra"] as DownloadCategory[])
   );
@@ -168,6 +169,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     setSortBy("score");
     setSortOrder("desc");
     setShowFilters(false);
+    setExpectedSizeGb("");
     setVisibleCategories(new Set(["main", "update", "dlc", "extra"] as DownloadCategory[]));
     setSelectedPlatforms([]);
     platformPreselectedRef.current = false;
@@ -218,9 +220,18 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     }
   }, [open, game, applyDownloadRules]);
 
-  const searchQueryKey = game?.id
-    ? `/api/search?query=${encodeURIComponent(debouncedSearchQuery)}&gameId=${game.id}`
-    : `/api/search?query=${encodeURIComponent(debouncedSearchQuery)}`;
+  const expectedSizeBytes = useMemo(() => {
+    const parsed = Number(expectedSizeGb);
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+    return Math.round(parsed * 1024 ** 3);
+  }, [expectedSizeGb]);
+
+  const searchQueryKey = useMemo(() => {
+    const params = new URLSearchParams({ query: debouncedSearchQuery });
+    if (game?.id) params.set("gameId", game.id);
+    if (expectedSizeBytes) params.set("expectedSize", String(expectedSizeBytes));
+    return `/api/search?${params.toString()}`;
+  }, [debouncedSearchQuery, expectedSizeBytes, game?.id]);
 
   const { data: searchResults, isLoading: isSearching } = useQuery<SearchResult>({
     queryKey: [searchQueryKey],
@@ -364,6 +375,7 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
     setMinSeeders(0);
     setSelectedIndexer("all");
     setSelectedPlatforms([]);
+    setExpectedSizeGb("");
     setVisibleCategories(new Set(["main", "update", "dlc", "extra"] as DownloadCategory[]));
   }, []);
 
@@ -756,6 +768,11 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                 Min Seeders: {minSeeders}
               </Badge>
             )}
+            {expectedSizeBytes && (
+              <Badge variant="secondary" className="text-xs">
+                Expected Size: {formatBytes(expectedSizeBytes)}
+              </Badge>
+            )}
             <Badge variant="outline" className="text-xs capitalize">
               Sorted by: {sortBy} ({sortOrder === "asc" ? "Asc" : "Desc"})
             </Badge>
@@ -813,6 +830,22 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                   min="0"
                   value={minSeeders}
                   onChange={(e) => setMinSeeders(parseInt(e.target.value) || 0)}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="expectedSizeGb" className="text-sm">
+                  Expected Size (GB)
+                </Label>
+                <Input
+                  id="expectedSizeGb"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={expectedSizeGb}
+                  onChange={(e) => setExpectedSizeGb(e.target.value)}
+                  placeholder="Optional"
                   className="w-full"
                 />
               </div>
@@ -1201,6 +1234,16 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                                       {download.releaseDecision.matchedFormats.join(
                                                         ", "
                                                       )}
+                                                    </div>
+                                                  )}
+                                                  {download.releaseDecision.sizeDeltaPercent !=
+                                                    null && (
+                                                    <div>
+                                                      Size delta:{" "}
+                                                      {Math.round(
+                                                        download.releaseDecision.sizeDeltaPercent
+                                                      )}
+                                                      %
                                                     </div>
                                                   )}
                                                   {download.releaseDecision.rejectionReasons

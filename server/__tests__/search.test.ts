@@ -281,6 +281,45 @@ describe("Search Module - searchAllIndexers", () => {
     expect(result.items[1].releaseDecision?.accepted).toBe(false);
   });
 
+  it("should downrank results that differ from the expected size by more than twenty percent", async () => {
+    const expectedSize = 50 * 1024 ** 3;
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(
+      makeNewznabResponse([
+        {
+          title: "Test Game PC-GROUP",
+          link: "http://usenet.example.com/right-size",
+          publishDate: "2024-01-01T00:00:00Z",
+          size: expectedSize,
+          grabs: 5,
+          category: ["4050"],
+          guid: "guid-right-size",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+        {
+          title: "Test Game PC-OTHER",
+          link: "http://usenet.example.com/wrong-size",
+          publishDate: "2024-01-02T00:00:00Z",
+          size: expectedSize * 1.25,
+          grabs: 10,
+          category: ["4050"],
+          guid: "guid-wrong-size",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+      ])
+    );
+
+    const result = await searchAllIndexers({ query: "test game", expectedSize });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].title).toBe("Test Game PC-GROUP");
+    expect(result.items[0].releaseDecision?.accepted).toBe(true);
+    expect(result.items[1].releaseDecision?.accepted).toBe(false);
+    expect(result.items[1].releaseDecision?.matchedFormats).toContain("Expected size mismatch");
+  });
+
   it("should aggregate errors from indexers", async () => {
     vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeTorznabIndexer()]);
     vi.mocked(torznabClient.searchMultipleIndexers).mockResolvedValue(
