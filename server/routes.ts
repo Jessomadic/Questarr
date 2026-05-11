@@ -78,7 +78,12 @@ const upload = multer({
   },
 });
 import { searchAllIndexers, filterBlacklistedReleases } from "./search.js";
-import { xrelClient, DEFAULT_XREL_BASE, ALLOWED_XREL_DOMAINS } from "./xrel.js";
+import {
+  xrelClient,
+  DEFAULT_XREL_BASE,
+  ALLOWED_XREL_DOMAINS,
+  type XrelReleaseListItem,
+} from "./xrel.js";
 import {
   normalizeTitle,
   cleanReleaseName,
@@ -149,6 +154,118 @@ function getIndexerCategories(indexer: Indexer) {
   return isNewznabIndexer(indexer)
     ? newznabClient.getCategories(indexer)
     : torznabClient.getCategories(indexer);
+}
+
+type XrelReleaseWithLibraryMatch = XrelReleaseListItem & {
+  libraryStatus?: string;
+  gameId?: string;
+  isWanted?: boolean;
+  matchCandidate?: unknown;
+};
+
+async function decorateXrelReleasesForUser(
+  releases: XrelReleaseListItem[],
+  userId: string,
+  options: { wantedOnly?: boolean; includeIgdbCandidates?: boolean } = {}
+): Promise<XrelReleaseWithLibraryMatch[]> {
+  const userGames = await storage.getUserGames(userId);
+  const wantedGames = userGames.filter((g) => g.status === "wanted");
+  const wantedGamesLookup = wantedGames.map((g) => {
+    const norm = normalizeTitle(g.title);
+    return {
+      game: g,
+      normalized: norm,
+      regex:
+        norm.length >= 5
+          ? new RegExp(`\\b${norm.replace(/[.*+?^${}()|[\\]/g, "\\$&")}\\b`, "i")
+          : null,
+      words: norm.split(" ").filter((w: string) => w.length > 2),
+    };
+  });
+
+  const gamesMap = new Map<string, Game>();
+  wantedGamesLookup.forEach((gl) => gamesMap.set(gl.normalized, gl.game));
+
+  const candidatesToMatch = new Set<string>();
+  const listWithMatches = releases.map((rel) => {
+    const relExtTitleNorm = rel.ext_info?.title ? normalizeTitle(rel.ext_info.title) : null;
+    const relDirCleaned = cleanReleaseName(rel.dirname);
+    const relDirNorm = normalizeTitle(relDirCleaned);
+
+    let matchedGame: Game | undefined;
+
+    if (relExtTitleNorm && gamesMap.has(relExtTitleNorm)) {
+      matchedGame = gamesMap.get(relExtTitleNorm);
+    } else if (gamesMap.has(relDirNorm)) {
+      matchedGame = gamesMap.get(relDirNorm);
+    }
+
+    if (!matchedGame) {
+      const relDirLower = rel.dirname.toLowerCase().replace(/[._-]/g, " ");
+      const relExtRegex =
+        relExtTitleNorm && relExtTitleNorm.length >= 5
+          ? new RegExp(`\\b${relExtTitleNorm.replace(/[.*+?^${}()|[\\]/g, "\\$&")}\\b`, "i")
+          : null;
+
+      const found = wantedGamesLookup.find((gl) => {
+        if (relExtTitleNorm) {
+          if (gl.regex && gl.regex.test(relExtTitleNorm)) return true;
+          if (relExtRegex && relExtRegex.test(gl.normalized)) return true;
+        }
+        if (gl.regex && gl.regex.test(relDirNorm)) return true;
+        if (gl.words.length > 0 && gl.words.every((word: string) => relDirLower.includes(word)))
+          return true;
+        return false;
+      });
+      matchedGame = found?.game;
+    }
+
+    if (!matchedGame && options.includeIgdbCandidates && !options.wantedOnly) {
+      const title = cleanReleaseName(rel.dirname);
+      if (title.length > 2) {
+        candidatesToMatch.add(title);
+      }
+    }
+
+    return {
+      ...rel,
+      libraryStatus: matchedGame?.status,
+      gameId: matchedGame?.id,
+      isWanted: matchedGame?.status === "wanted",
+    };
+  });
+
+  const visibleList = options.wantedOnly
+    ? listWithMatches.filter((item) => item.isWanted)
+    : listWithMatches;
+
+  if (!options.includeIgdbCandidates || options.wantedOnly) {
+    return visibleList;
+  }
+
+  const igdbMatches = await igdbClient.batchSearchGames(Array.from(candidatesToMatch));
+  if (igdbMatches.size > 0) {
+    routesLogger.debug(
+      {
+        count: igdbMatches.size,
+        matches: Array.from(igdbMatches.entries()).map(([k, v]) => `${k} => ${v?.name}`),
+      },
+      "IGDB Matches found"
+    );
+  }
+
+  return visibleList.map((item) => {
+    if (item.libraryStatus) return item;
+
+    const title = cleanReleaseName(item.dirname);
+    const match = igdbMatches.get(title);
+    if (!match) return item;
+
+    return {
+      ...item,
+      matchCandidate: igdbClient.formatGameData(match),
+    };
+  });
 }
 
 // Helper function for aggregated indexer search
@@ -3176,6 +3293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         typeof req.query.p2pCategoryId === "string" && req.query.p2pCategoryId.trim()
           ? req.query.p2pCategoryId.trim()
           : undefined;
+      const wantedOnly = req.query.wantedOnly === "true" || req.query.wantedOnly === "1";
       const baseUrl =
         (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
         process.env.XREL_API_BASE ||
@@ -3353,7 +3471,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return item;
       });
 
-      res.json({ ...result, list: finallist });
+      res.json({
+        ...result,
+        list: wantedOnly ? finallist.filter((item) => item.isWanted) : finallist,
+      });
     } catch (error) {
       next(error);
     }
@@ -3380,6 +3501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const scene = req.query.scene !== "false" && req.query.scene !== "0";
       const p2p = req.query.p2p === "true" || req.query.p2p === "1";
+      const wantedOnly = req.query.wantedOnly === "true" || req.query.wantedOnly === "1";
       const limit = req.query.limit
         ? Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10)))
         : 25;
@@ -3388,7 +3510,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         process.env.XREL_API_BASE ||
         DEFAULT_XREL_BASE;
       const list = await xrelClient.searchReleases(q, { scene, p2p, limit, baseUrl });
-      res.json({ results: list });
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.json({ results: wantedOnly ? [] : list });
+      }
+      const results = await decorateXrelReleasesForUser(list, userId, {
+        wantedOnly,
+        includeIgdbCandidates: false,
+      });
+      res.json({ results });
     } catch (error) {
       next(error);
     }

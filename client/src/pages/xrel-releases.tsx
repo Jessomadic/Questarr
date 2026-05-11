@@ -29,6 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 
 type XrelSource = "scene" | "p2p" | "all";
@@ -122,6 +123,7 @@ export default function XrelReleasesPage() {
   const [p2pCategoryId, setP2pCategoryId] = useState("all");
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
+  const [wantedOnly, setWantedOnly] = useState(false);
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -147,6 +149,7 @@ export default function XrelReleasesPage() {
       sceneCategory,
       p2pCategoryId,
       submittedSearch,
+      wantedOnly,
     ],
     queryFn: async () => {
       if (submittedSearch.trim()) {
@@ -156,6 +159,7 @@ export default function XrelReleasesPage() {
           p2p: source !== "scene" ? "1" : "0",
           limit: "25",
         });
+        if (wantedOnly) params.set("wantedOnly", "true");
         const res = await fetch(`/api/xrel/search?${params}`, { headers: authHeaders() });
         if (!res.ok) throw new Error("Failed to search xREL releases");
         return res.json();
@@ -169,6 +173,7 @@ export default function XrelReleasesPage() {
       if (archive) params.set("archive", archive);
       if (sceneCategory !== "all") params.set("sceneCategory", sceneCategory);
       if (p2pCategoryId !== "all") params.set("p2pCategoryId", p2pCategoryId);
+      if (wantedOnly) params.set("wantedOnly", "true");
 
       const res = await fetch(`/api/xrel/latest?${params}`, { headers: authHeaders() });
       if (!res.ok) throw new Error("Failed to fetch xREL latest releases");
@@ -229,6 +234,7 @@ export default function XrelReleasesPage() {
     setP2pCategoryId("all");
     setSearchInput("");
     setSubmittedSearch("");
+    setWantedOnly(false);
   }
 
   function submitSearch() {
@@ -377,6 +383,23 @@ export default function XrelReleasesPage() {
               <Search className="h-4 w-4" />
               Search
             </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+            <div>
+              <div className="text-sm font-medium">Wanted games only</div>
+              <div className="text-xs text-muted-foreground">
+                Show xREL entries that match games already marked wanted in your library.
+              </div>
+            </div>
+            <Switch
+              checked={wantedOnly}
+              onCheckedChange={(checked) => {
+                setWantedOnly(checked);
+                setPage(1);
+              }}
+              aria-label="Filter xREL releases to wanted games only"
+            />
           </div>
 
           {isSearchMode && (
