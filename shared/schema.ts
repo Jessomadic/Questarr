@@ -415,7 +415,7 @@ export const updateReleaseProfileSchema = releaseProfileSchema.partial();
 export const insertCustomFormatSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   description: z.string().default(""),
-  conditionType: z.enum(["builtin", "title", "release_group", "category", "protocol"]),
+  conditionType: z.enum(["builtin", "title", "release_group", "uploader", "category", "protocol"]),
   matcherMode: z.enum(["builtin", "contains", "exact", "regex"]),
   matcherValue: z.string().default(""),
   score: z.number().int().default(0),
@@ -575,6 +575,9 @@ export interface SearchResultItem {
   leechers?: number;
   downloadVolumeFactor?: number;
   uploadVolumeFactor?: number;
+  poster?: string;
+  uploader?: string;
+  group?: string;
   guid?: string;
   comments?: string;
   attributes?: { [key: string]: string };

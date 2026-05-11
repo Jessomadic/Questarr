@@ -95,6 +95,7 @@ function toCustomFormat(row: CustomFormatRow): CustomFormat {
   const conditionType =
     row.conditionType === "title" ||
     row.conditionType === "release_group" ||
+    row.conditionType === "uploader" ||
     row.conditionType === "category" ||
     row.conditionType === "protocol"
       ? row.conditionType

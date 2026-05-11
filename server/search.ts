@@ -37,6 +37,7 @@ export interface SearchItem {
   age?: number;
   files?: number;
   poster?: string;
+  uploader?: string;
   group?: string;
   comments?: string;
   releaseDecision?: ReleaseDecision;
@@ -92,6 +93,9 @@ interface TorznabSearchItem {
   downloadVolumeFactor?: number;
   uploadVolumeFactor?: number;
   comments?: string;
+  poster?: string;
+  uploader?: string;
+  group?: string;
 }
 
 interface NewznabSearchItem {
@@ -107,6 +111,7 @@ interface NewznabSearchItem {
   age?: number;
   files?: number;
   poster?: string;
+  uploader?: string;
   group?: string;
 }
 
@@ -157,7 +162,9 @@ function mapTorznabItem(item: TorznabSearchItem): SearchItem {
     leechers: item.leechers,
     downloadVolumeFactor: item.downloadVolumeFactor,
     uploadVolumeFactor: item.uploadVolumeFactor,
-    group: parseReleaseMetadata(item.title).group,
+    poster: item.poster,
+    uploader: item.uploader,
+    group: item.group || parseReleaseMetadata(item.title).group,
     comments,
   };
 }
@@ -177,6 +184,7 @@ function mapNewznabItem(item: NewznabSearchItem): SearchItem {
     age: item.age,
     files: item.files,
     poster: item.poster,
+    uploader: item.uploader,
     group: item.group,
   };
 }
@@ -347,6 +355,9 @@ export async function searchAllIndexers(
         seeders: item.seeders,
         grabs: item.grabs,
         files: item.files,
+        poster: item.poster,
+        uploader: item.uploader,
+        group: item.group,
         preferredPlatform:
           options.releaseProfile?.preferredPlatform ?? DEFAULT_RELEASE_PROFILE.preferredPlatform,
       },

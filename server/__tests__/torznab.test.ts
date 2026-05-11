@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Indexer } from "@shared/schema";
+import { DEFAULT_GAME_CATEGORY_IDS } from "@shared/release-profiles";
 
 vi.mock("../db.js", () => ({ pool: {}, db: {} }));
 vi.mock("../logger.js", () => ({
@@ -82,6 +83,16 @@ describe("TorznabClient — download link rewriting", () => {
 
     const url = new URL(mockSafeFetch.mock.calls[0][0] as string);
     expect(url.searchParams.get("cat")).toBeNull();
+  });
+
+  it("uses known Newznab/Torznab game category ids by default", async () => {
+    const indexer = makeIndexer({ categories: [] });
+    mockFetchResponse(makeTorznabXml("http://indexer.example.com/download/file.torrent"));
+
+    await client.searchGames(indexer, { query: "game" });
+
+    const url = new URL(mockSafeFetch.mock.calls[0][0] as string);
+    expect(url.searchParams.get("cat")).toBe(DEFAULT_GAME_CATEGORY_IDS.join(","));
   });
 
   it("applies standard host rewrite for non-Prowlarr indexers returning an internal URL", async () => {

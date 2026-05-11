@@ -1,6 +1,9 @@
 import { XMLParser } from "fast-xml-parser";
 import { type Indexer } from "@shared/schema";
-import { categoriesMatchIndexerCategoryRequest } from "../shared/release-profiles.js";
+import {
+  categoriesMatchIndexerCategoryRequest,
+  DEFAULT_GAME_CATEGORY_IDS,
+} from "../shared/release-profiles.js";
 import { routesLogger } from "./logger.js";
 import { isSafeUrl, safeFetch } from "./ssrf.js";
 
@@ -31,6 +34,7 @@ export interface NewznabResult {
   age?: number; // Age in days
   files?: number; // Number of files in NZB
   poster?: string; // Usenet poster
+  uploader?: string; // Indexer uploader or author when provided
   group?: string; // Usenet newsgroup
 }
 
@@ -46,20 +50,25 @@ export interface NewznabCategory {
 }
 
 export const DEFAULT_NEWZNAB_GAME_CATEGORIES: NewznabCategory[] = [
-  { id: "4000", name: "PC" },
-  { id: "4050", name: "PC > Games" },
   { id: "1000", name: "Console" },
   { id: "1010", name: "Console > NDS" },
   { id: "1020", name: "Console > PSP" },
   { id: "1030", name: "Console > Wii" },
   { id: "1040", name: "Console > Xbox" },
   { id: "1050", name: "Console > Xbox 360" },
+  { id: "1060", name: "Console > Wiiware" },
+  { id: "1070", name: "Console > Xbox 360 DLC" },
   { id: "1080", name: "Console > PlayStation 3" },
   { id: "1110", name: "Console > Nintendo 3DS" },
   { id: "1120", name: "Console > PlayStation Vita" },
   { id: "1130", name: "Console > Wii U" },
   { id: "1140", name: "Console > Xbox One" },
   { id: "1180", name: "Console > PlayStation 4" },
+  { id: "4000", name: "PC" },
+  { id: "4010", name: "PC > 0day" },
+  { id: "4020", name: "PC > ISO" },
+  { id: "4030", name: "PC > Mac" },
+  { id: "4050", name: "PC > Games" },
 ];
 
 function buildNewznabApiUrl(indexer: Indexer, apiFunction: string): URL {
@@ -275,8 +284,8 @@ class NewznabClient {
           }
         } else {
           // If NO categories are configured, default to standard Game categories
-          // 4000: PC Games, 1000: Console Games
-          url.searchParams.set("cat", "4000,1000");
+          // Newznab game release categories: Console 1000/10xx and PC 4000/40xx.
+          url.searchParams.set("cat", DEFAULT_GAME_CATEGORY_IDS.join(","));
         }
       }
 
@@ -332,7 +341,7 @@ class NewznabClient {
 
           for (const attr of attrsArray) {
             if (attr["@_name"] && attr["@_value"]) {
-              attrMap.set(attr["@_name"], attr["@_value"]);
+              attrMap.set(String(attr["@_name"]).toLowerCase(), String(attr["@_value"]));
             }
           }
 
@@ -352,7 +361,7 @@ class NewznabClient {
             categories.push(...cats.filter(Boolean).map(String));
           }
           for (const attr of attrsArray) {
-            if (attr["@_name"] === "category" && attr["@_value"]) {
+            if (String(attr["@_name"]).toLowerCase() === "category" && attr["@_value"]) {
               categories.push(String(attr["@_value"]));
             }
           }
@@ -388,8 +397,14 @@ class NewznabClient {
               const num = parseInt(val, 10);
               return !isNaN(num) ? num : undefined;
             })(),
-            poster: attrMap.get("poster"),
-            group: attrMap.get("group"),
+            poster: attrMap.get("poster") || (item.author ? String(item.author) : undefined),
+            uploader:
+              attrMap.get("uploader") ||
+              attrMap.get("uploadermail") ||
+              attrMap.get("uploaderemail") ||
+              attrMap.get("postedby") ||
+              (item.author ? String(item.author) : undefined),
+            group: attrMap.get("group") || attrMap.get("groups"),
           });
         }
       }

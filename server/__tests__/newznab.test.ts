@@ -62,6 +62,7 @@ const mockSearchXml = `<?xml version="1.0" encoding="UTF-8"?>
       <newznab:attr name="grabs" value="5" />
       <newznab:attr name="files" value="1" />
       <newznab:attr name="poster" value="poster@example.com" />
+      <newznab:attr name="uploader" value="trusted@example.com" />
       <newznab:attr name="group" value="alt.binaries.games" />
     </item>
   </channel>
@@ -118,6 +119,13 @@ describe("NewznabClient", () => {
       expect(results[0].grabs).toBe(5);
       expect(results[0].files).toBe(1);
       expect(results[0].category).toContain("4000");
+      expect(results[0].poster).toBe("poster@example.com");
+      expect(results[0].uploader).toBe("trusted@example.com");
+      expect(results[0].group).toBe("alt.binaries.games");
+      const searchUrl = new URL((safeFetch as Mock).mock.calls[0][0]);
+      expect(searchUrl.searchParams.get("cat")).toBe(
+        DEFAULT_NEWZNAB_GAME_CATEGORIES.map((cat) => cat.id).join(",")
+      );
     });
 
     it("should preserve category labels and extract numeric category attrs", async () => {

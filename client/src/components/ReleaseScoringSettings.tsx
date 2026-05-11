@@ -27,6 +27,7 @@ import type {
 const CONDITION_OPTIONS: Array<{ value: CustomFormatConditionType; label: string }> = [
   { value: "title", label: "Title" },
   { value: "release_group", label: "Release Group" },
+  { value: "uploader", label: "Uploader / Poster" },
   { value: "category", label: "Category" },
   { value: "protocol", label: "Protocol" },
 ];

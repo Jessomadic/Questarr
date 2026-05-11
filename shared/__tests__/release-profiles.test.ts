@@ -9,6 +9,9 @@ describe("release profile evaluation", () => {
   it("classifies numeric and label-based game categories", () => {
     expect(classifyIndexerCategories(["4050"])).toBe("game");
     expect(classifyIndexerCategories(["4000"])).toBe("game");
+    expect(classifyIndexerCategories(["4010"])).toBe("game");
+    expect(classifyIndexerCategories(["1000"])).toBe("game");
+    expect(classifyIndexerCategories(["1070"])).toBe("game");
     expect(classifyIndexerCategories(["PC > Games"])).toBe("game");
     expect(classifyIndexerCategories(["Games"])).toBe("game");
     expect(classifyIndexerCategories(["PC > Games", "4050"])).toBe("game");
@@ -194,5 +197,50 @@ describe("release profile evaluation", () => {
 
     expect(boosted.score).toBe(base.score + 75);
     expect(boosted.matchedFormats).toContain("Release group: GROUP");
+  });
+
+  it("scores Usenet poster emails and games newsgroups", () => {
+    const decision = evaluateRelease({
+      title: "Test.Game-GROUP",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      poster: "uploader@example.com",
+      group: "alt.binaries.games",
+    });
+
+    expect(decision.accepted).toBe(true);
+    expect(decision.matchedFormats).toContain("Usenet poster email");
+    expect(decision.matchedFormats).toContain("Games newsgroup");
+  });
+
+  it("allows uploader custom formats to match poster emails", () => {
+    const decision = evaluateRelease(
+      {
+        title: "Test.Game-GROUP",
+        gameTitle: "Test Game",
+        category: ["4050"],
+        downloadType: "usenet",
+        poster: "trusted-uploader@example.com",
+      },
+      undefined,
+      [
+        ...DEFAULT_CUSTOM_FORMATS,
+        {
+          id: "trusted-uploader",
+          name: "Trusted uploader",
+          description: "",
+          conditionType: "uploader",
+          matcherMode: "contains",
+          matcherValue: "trusted-uploader@example.com",
+          score: 50,
+          enabled: true,
+          hardReject: false,
+          builtIn: false,
+        },
+      ]
+    );
+
+    expect(decision.matchedFormats).toContain("Trusted uploader");
   });
 });

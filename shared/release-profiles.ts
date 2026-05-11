@@ -14,9 +14,32 @@ export type CustomFormatConditionType =
   | "builtin"
   | "title"
   | "release_group"
+  | "uploader"
   | "category"
   | "protocol";
 export type CustomFormatMatcherMode = "builtin" | "contains" | "exact" | "regex";
+
+export const DEFAULT_GAME_CATEGORY_IDS = [
+  "1000",
+  "1010",
+  "1020",
+  "1030",
+  "1040",
+  "1050",
+  "1060",
+  "1070",
+  "1080",
+  "1110",
+  "1120",
+  "1130",
+  "1140",
+  "1180",
+  "4000",
+  "4010",
+  "4020",
+  "4030",
+  "4050",
+];
 
 export interface CustomFormat {
   id: string;
@@ -64,6 +87,9 @@ export interface EvaluateReleaseInput {
   seeders?: number;
   grabs?: number;
   files?: number;
+  poster?: string;
+  group?: string;
+  uploader?: string;
   preferredPlatform?: string | null;
 }
 
@@ -239,6 +265,30 @@ export const DEFAULT_CUSTOM_FORMATS: CustomFormat[] = [
     builtIn: true,
   },
   {
+    id: "usenet-poster-email",
+    name: "Usenet poster email",
+    description: "The NZB includes a poster or upload email signal from the indexer.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "usenet-poster-email",
+    score: 6,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
+    id: "usenet-games-newsgroup",
+    name: "Games newsgroup",
+    description: "The NZB was posted to a games-related Usenet group.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "usenet-games-newsgroup",
+    score: 12,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
     id: "non-game-media",
     name: "Non-game media",
     description:
@@ -286,6 +336,9 @@ const REPACK_PATTERN = /\b(repack|repackaged|re-repack)\b/i;
 const UPDATE_PATTERN = /\b(update|patch|hotfix)\b/i;
 const DLC_PATTERN = /\b(dlc|expansion|season[ ._-]?pass|unlocker)\b/i;
 const CRACKFIX_PATTERN = /\b(crackfix|hotfix|fixed|fix)\b/i;
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const USENET_GAMES_GROUP_PATTERN =
+  /\b(?:alt\.binaries\.(?:games|cd\.image|console|xbox|xbox360|wii|ps3|ps4|psp|nds|3ds|switch)(?:\.[a-z0-9-]+)*|a\.b\.(?:games|cd\.image|console)(?:\.[a-z0-9-]+)*)\b/i;
 const METADATA_ONLY_TITLE_TOKENS = new Set([
   "edition",
   "complete",
@@ -341,7 +394,8 @@ const NON_GAME_CATEGORY_LABEL_PATTERN =
   /\b(?:app|apps|application|applications|audio|book|books|ebook|ebooks|movie|movies|music|software|tv|manual|manuals|trainer|trainers|xxx|adult)\b/i;
 
 function isNumericGameCategory(category: string): boolean {
-  return /^40\d{2}$/.test(category.trim());
+  const trimmed = category.trim();
+  return /^40\d{2}$/.test(trimmed) || /^1\d{3}$/.test(trimmed);
 }
 
 function isTextGameCategory(category: string): boolean {
@@ -472,7 +526,16 @@ function customFormatMatches(
 ): boolean {
   if (!format.enabled || format.conditionType === "builtin") return false;
   if (format.conditionType === "title") return textMatches(input.title, format);
-  if (format.conditionType === "release_group") return textMatches(metadata.group, format);
+  if (format.conditionType === "release_group") {
+    return textMatches(input.group, format) || textMatches(metadata.group, format);
+  }
+  if (format.conditionType === "uploader") {
+    return (
+      textMatches(input.uploader, format) ||
+      textMatches(input.poster, format) ||
+      textMatches(input.group, format)
+    );
+  }
   if (format.conditionType === "category") return categoryMatches(categories, format);
   if (format.conditionType === "protocol") return textMatches(input.downloadType, format);
   return false;
@@ -527,6 +590,12 @@ export function evaluateRelease(
 
   if (input.downloadType === "usenet" && ((input.grabs ?? 0) > 0 || (input.files ?? 0) > 0)) {
     addScore(decision, formats, "usenet-health");
+  }
+  if (input.downloadType === "usenet" && EMAIL_PATTERN.test(input.poster ?? input.uploader ?? "")) {
+    addScore(decision, formats, "usenet-poster-email");
+  }
+  if (input.downloadType === "usenet" && USENET_GAMES_GROUP_PATTERN.test(input.group ?? "")) {
+    addScore(decision, formats, "usenet-games-newsgroup");
   }
 
   if (NON_GAME_MEDIA_PATTERN.test(input.title)) {

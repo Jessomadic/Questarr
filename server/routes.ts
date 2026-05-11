@@ -2009,6 +2009,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       seeders: z.number().optional(),
       grabs: z.number().optional(),
       files: z.number().optional(),
+      poster: z.string().optional(),
+      uploader: z.string().optional(),
+      group: z.string().optional(),
       preferredPlatform: z.string().nullable().optional(),
     });
 
