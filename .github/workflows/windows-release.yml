@@ -234,10 +234,13 @@ jobs:
               "{app}\$relativeDir"
             }
 
-            'Source: "' + (ConvertTo-InnoString $sourcePath) + '"; DestDir: "' + (ConvertTo-InnoString $destDir) + '"; Flags: ignoreversion createallsubdirs; Check: ShouldInstallPayloadFile(''' + (ConvertTo-InnoSingleQuotedString $entry.path) + ''')'
+            'Source: "' + (ConvertTo-InnoString $sourcePath) + '"; DestDir: "' + (ConvertTo-InnoString $destDir) + '"; Flags: ignoreversion; Check: ShouldInstallPayloadFile(''' + (ConvertTo-InnoSingleQuotedString $entry.path) + ''')'
           }
 
           $includeLines | Set-Content -LiteralPath $includePath -Encoding utf8
+          if (Select-String -LiteralPath $includePath -Pattern "createallsubdirs" -Quiet) {
+            throw "Generated Inno file list must not use createallsubdirs for per-file entries"
+          }
 
       - name: Build installer
         shell: pwsh
