@@ -78,16 +78,72 @@ describe("xREL Client", () => {
 
       // Should filter out non-game releases
       expect(results).toHaveLength(1);
-      expect(results[0]).toEqual({
+      expect(results[0]).toMatchObject({
         id: "123",
         dirname: "Game.Name-GROUP",
-        link_href: "/release/123.html",
+        link_href: "https://www.xrel.to/release/123.html",
         time: 1600000000,
         group_name: "GROUP",
         sizeMb: 1024,
         sizeUnit: "MB",
-        ext_info: mockResponse.results[0].ext_info,
+        ext_info: {
+          ...mockResponse.results[0].ext_info,
+          link_href: "https://www.xrel.to/game/game1.html",
+        },
         source: "scene",
+      });
+    });
+
+    it("should parse OpenAPI result search payloads with mixed scene and P2P releases", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          result: [
+            {
+              id: "scene1",
+              dirname: "Scene.Game-GROUP",
+              link_href: "/release/scene1.html",
+              time: "1600000001",
+              group_name: "GROUP",
+              ext_info: {
+                type: "master_game",
+                id: "game1",
+                title: "Scene Game",
+                link_href: "/game/game1.html",
+              },
+            } as XrelSceneRelease,
+            {
+              id: "p2p1",
+              dirname: "P2P.Game-GROUP",
+              link_href: "/p2p/p2p1.html",
+              pub_time: 1600000002,
+              group: { id: "g1", name: "P2PGROUP" },
+              category: { id: "1", meta_cat: "Games", sub_cat: "PC" },
+              ext_info: {
+                type: "master_game",
+                id: "game2",
+                title: "P2P Game",
+                link_href: "/game/game2.html",
+              },
+            } as XrelP2pRelease,
+          ],
+        }),
+      });
+
+      const results = await xrelClient.searchReleases("Game", { p2p: true });
+
+      expect(results).toHaveLength(2);
+      expect(results[0]).toMatchObject({
+        id: "p2p1",
+        source: "p2p",
+        category: "Games > PC",
+        categoryId: "1",
+      });
+      expect(results[1]).toMatchObject({
+        id: "scene1",
+        source: "scene",
+        time: 1600000001,
       });
     });
 
@@ -212,6 +268,27 @@ describe("xREL Client", () => {
       expect(result.list).toHaveLength(1);
       expect(result.list[0].id).toBe("1");
       expect(result.total_count).toBe(500);
+    });
+  });
+
+  describe("getReleaseCategories", () => {
+    it("should fetch scene and P2P categories", async () => {
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ name: "Games", parent_cat: "PC" }],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "2", meta_cat: "Games", sub_cat: "PC" }],
+        });
+
+      const categories = await xrelClient.getReleaseCategories();
+
+      expect(categories.scene).toEqual([{ name: "Games", parent_cat: "PC" }]);
+      expect(categories.p2p).toEqual([{ id: "2", meta_cat: "Games", sub_cat: "PC" }]);
     });
   });
 

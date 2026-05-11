@@ -3159,17 +3159,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/xrel/latest", async (req, res, next) => {
     try {
       const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+      const perPage = req.query.perPage
+        ? Math.min(100, Math.max(5, parseInt(String(req.query.perPage), 10)))
+        : 20;
+      const source =
+        req.query.source === "p2p" || req.query.source === "all" ? req.query.source : "scene";
+      const archive =
+        typeof req.query.archive === "string" && /^\d{4}-\d{2}$/.test(req.query.archive)
+          ? req.query.archive
+          : undefined;
+      const sceneCategory =
+        typeof req.query.sceneCategory === "string" && req.query.sceneCategory.trim()
+          ? req.query.sceneCategory.trim()
+          : undefined;
+      const p2pCategoryId =
+        typeof req.query.p2pCategoryId === "string" && req.query.p2pCategoryId.trim()
+          ? req.query.p2pCategoryId.trim()
+          : undefined;
       const baseUrl =
         (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
         process.env.XREL_API_BASE ||
         DEFAULT_XREL_BASE;
 
-      // Use getLatestGames which handles pagination correctly across game-filtered results
-      const result = await xrelClient.getLatestGames({
-        page,
-        perPage: 20,
-        baseUrl,
-      });
+      const result =
+        source === "p2p"
+          ? await xrelClient.getP2pReleases({
+              page,
+              perPage,
+              baseUrl,
+              categoryId: p2pCategoryId,
+            })
+          : source === "all"
+            ? await (async () => {
+                const [sceneResult, p2pResult] = await Promise.all([
+                  archive || sceneCategory
+                    ? xrelClient.getLatestReleases({
+                        page,
+                        perPage,
+                        baseUrl,
+                        extInfoType: "game",
+                        archive,
+                        categoryName: sceneCategory,
+                      })
+                    : xrelClient.getLatestGames({ page, perPage, baseUrl }),
+                  xrelClient.getP2pReleases({
+                    page,
+                    perPage,
+                    baseUrl,
+                    categoryId: p2pCategoryId,
+                  }),
+                ]);
+                const list = [...sceneResult.list, ...p2pResult.list]
+                  .sort((a, b) => b.time - a.time)
+                  .slice(0, perPage);
+                return {
+                  list,
+                  pagination: {
+                    current_page: page,
+                    per_page: perPage,
+                    total_pages: Math.max(
+                      sceneResult.pagination.total_pages,
+                      p2pResult.pagination.total_pages
+                    ),
+                  },
+                  total_count: sceneResult.total_count + p2pResult.total_count,
+                };
+              })()
+            : archive || sceneCategory
+              ? await xrelClient.getLatestReleases({
+                  page,
+                  perPage,
+                  baseUrl,
+                  extInfoType: "game",
+                  archive,
+                  categoryName: sceneCategory,
+                })
+              : await xrelClient.getLatestGames({
+                  page,
+                  perPage,
+                  baseUrl,
+                });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const userId = (req as any).user.id;
@@ -3285,6 +3354,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.json({ ...result, list: finallist });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/xrel/categories", async (_req, res, next) => {
+    try {
+      const baseUrl =
+        (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
+        process.env.XREL_API_BASE ||
+        DEFAULT_XREL_BASE;
+      const categories = await xrelClient.getReleaseCategories({ baseUrl });
+      res.json(categories);
     } catch (error) {
       next(error);
     }
