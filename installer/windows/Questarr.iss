@@ -86,7 +86,7 @@ var
   ManifestPath: String;
   Script: String;
   ResultCode: Integer;
-  ChangedRaw: String;
+  ChangedRaw: AnsiString;
   InstallDir: String;
 begin
   Result := False;
@@ -151,7 +151,8 @@ begin
     Exit;
   end;
 
-  ChangedPayloadFiles := Trim(ChangedRaw);
+  ChangedPayloadFiles := ChangedRaw;
+  ChangedPayloadFiles := Trim(ChangedPayloadFiles);
   if ChangedPayloadFiles = '' then
   begin
     ChangedPayloadFiles := '*';
