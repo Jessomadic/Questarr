@@ -186,6 +186,59 @@ jobs:
           $nodePath = (Get-Command node).Source
           Copy-Item -Path $nodePath -Destination (Join-Path $binDir "node.exe")
 
+          $payloadRootPath = (Get-Item -LiteralPath $payloadRoot).FullName
+          $manifestPath = Join-Path $payloadRootPath "questarr-install-manifest.json"
+          $includePath = Join-Path "release" "questarr-files.iss"
+
+          function ConvertTo-InnoString {
+            param([Parameter(Mandatory = $true)][string] $Value)
+            return $Value.Replace('"', '""')
+          }
+
+          function ConvertTo-InnoSingleQuotedString {
+            param([Parameter(Mandatory = $true)][string] $Value)
+            return $Value.Replace("'", "''")
+          }
+
+          $payloadRootPrefix = $payloadRootPath.TrimEnd('\') + '\'
+          $payloadFiles = Get-ChildItem -LiteralPath $payloadRootPath -Recurse -File |
+            Where-Object { $_.FullName -ne $manifestPath } |
+            Sort-Object FullName
+
+          $manifestFiles = foreach ($file in $payloadFiles) {
+            if (-not $file.FullName.StartsWith($payloadRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Payload file is outside the payload root: $($file.FullName)"
+            }
+
+            $relativePath = $file.FullName.Substring($payloadRootPrefix.Length).Replace('\', '/')
+            [ordered]@{
+              path = $relativePath
+              size = $file.Length
+              sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+
+          [ordered]@{
+            version = "${{ steps.meta.outputs.version }}"
+            generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+            files = @($manifestFiles)
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+
+          $includeLines = foreach ($entry in $manifestFiles) {
+            $relativeWindowsPath = $entry.path.Replace('/', '\')
+            $sourcePath = Join-Path $payloadRootPath $relativeWindowsPath
+            $relativeDir = Split-Path $relativeWindowsPath -Parent
+            $destDir = if ([string]::IsNullOrWhiteSpace($relativeDir)) {
+              "{app}"
+            } else {
+              "{app}\$relativeDir"
+            }
+
+            'Source: "' + (ConvertTo-InnoString $sourcePath) + '"; DestDir: "' + (ConvertTo-InnoString $destDir) + '"; Flags: ignoreversion createallsubdirs; Check: ShouldInstallPayloadFile(''' + (ConvertTo-InnoSingleQuotedString $entry.path) + ''')'
+          }
+
+          $includeLines | Set-Content -LiteralPath $includePath -Encoding utf8
+
       - name: Build installer
         shell: pwsh
         run: |
@@ -196,6 +249,7 @@ jobs:
           $env:QUESTARR_VERSION = "${{ steps.meta.outputs.version }}"
           $env:QUESTARR_SOURCE_DIR = (Resolve-Path (Join-Path "release" "payload")).Path
           $env:QUESTARR_OUTPUT_DIR = (Resolve-Path $installerOutput).Path
+          $env:QUESTARR_FILES_INCLUDE = (Resolve-Path (Join-Path "release" "questarr-files.iss")).Path
 
           $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
           & $iscc installer/windows/Questarr.iss
@@ -223,7 +277,9 @@ jobs:
             "release/payload/dist/server/index.js",
             "release/payload/migrations/meta/_journal.json",
             "release/payload/node_modules/better-sqlite3",
-            "release/payload/README-WINDOWS.txt"
+            "release/payload/README-WINDOWS.txt",
+            "release/payload/questarr-install-manifest.json",
+            "release/questarr-files.iss"
           )
 
           foreach ($path in $requiredPaths) {

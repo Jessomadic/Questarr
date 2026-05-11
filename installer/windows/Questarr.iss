@@ -3,9 +3,14 @@
 #define MyAppVersion GetEnv("QUESTARR_VERSION")
 #define MySourceDir GetEnv("QUESTARR_SOURCE_DIR")
 #define MyOutputDir GetEnv("QUESTARR_OUTPUT_DIR")
+#define MyFilesInclude GetEnv("QUESTARR_FILES_INCLUDE")
 
 #if MyAppVersion == ""
   #define MyAppVersion "0.0.0"
+#endif
+
+#if MyFilesInclude == ""
+  #error QUESTARR_FILES_INCLUDE must point to the generated installer file list.
 #endif
 
 [Setup]
@@ -33,7 +38,9 @@ Name: "{commonappdata}\Questarr\data"
 Name: "{commonappdata}\Questarr\logs"
 
 [Files]
-Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\questarr-install-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceDir}\questarr-install-manifest.json"; Flags: dontcopy
+#include MyFilesInclude
 
 [Icons]
 Name: "{group}\Questarr"; Filename: "http://localhost:5000"
@@ -61,6 +68,116 @@ begin
   Escaped := Value;
   StringChangeEx(Escaped, '''', '''''', True);
   Result := '''' + Escaped + '''';
+end;
+
+var
+  ChangedPayloadFiles: String;
+
+function NormalizePayloadRelativePath(Value: String): String;
+begin
+  Result := Lowercase(Value);
+  StringChangeEx(Result, '/', '\', True);
+end;
+
+function BuildChangedPayloadList(): Boolean;
+var
+  ScriptPath: String;
+  OutputPath: String;
+  ManifestPath: String;
+  Script: String;
+  ResultCode: Integer;
+  ChangedRaw: String;
+  InstallDir: String;
+begin
+  Result := False;
+  ChangedPayloadFiles := '*';
+  InstallDir := ExpandConstant('{app}');
+  ScriptPath := ExpandConstant('{tmp}\questarr-changed-payload.ps1');
+  OutputPath := ExpandConstant('{tmp}\questarr-changed-payload.txt');
+  ExtractTemporaryFile('questarr-install-manifest.json');
+  ManifestPath := ExpandConstant('{tmp}\questarr-install-manifest.json');
+
+  Script :=
+    '$ErrorActionPreference = ''Stop''' + #13#10 +
+    '$manifestPath = ' + PowerShellSingleQuote(ManifestPath) + #13#10 +
+    '$installDir = [System.IO.Path]::GetFullPath(' + PowerShellSingleQuote(InstallDir) + ')' + #13#10 +
+    '$outputPath = ' + PowerShellSingleQuote(OutputPath) + #13#10 +
+    '$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json' + #13#10 +
+    '$changed = New-Object System.Collections.Generic.List[string]' + #13#10 +
+    'foreach ($entry in $manifest.files) {' + #13#10 +
+    '  $relative = [string]$entry.path' + #13#10 +
+    '  if ([string]::IsNullOrWhiteSpace($relative)) { continue }' + #13#10 +
+    '  $relativeForDisk = $relative.Replace(''/'', [System.IO.Path]::DirectorySeparatorChar)' + #13#10 +
+    '  $targetPath = Join-Path $installDir $relativeForDisk' + #13#10 +
+    '  if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) { $changed.Add($relative); continue }' + #13#10 +
+    '  $file = Get-Item -LiteralPath $targetPath' + #13#10 +
+    '  if ($file.Length -ne [int64]$entry.size) { $changed.Add($relative); continue }' + #13#10 +
+    '  $hash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()' + #13#10 +
+    '  if ($hash -ne ([string]$entry.sha256).ToLowerInvariant()) { $changed.Add($relative); continue }' + #13#10 +
+    '}' + #13#10 +
+    '$normalized = @($changed | ForEach-Object { $_.Replace(''/'', ''\'').ToLowerInvariant() })' + #13#10 +
+    '$payload = ''|'' + ($normalized -join ''|'') + ''|''' + #13#10 +
+    'Set-Content -LiteralPath $outputPath -Value $payload -Encoding UTF8' + #13#10;
+
+  Log('Building Questarr changed-file list before extraction.');
+  if not SaveStringToFile(ScriptPath, Script, False) then
+  begin
+    Log('Could not write changed-file scan script. Installing all payload files.');
+    Exit;
+  end;
+
+  if not Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -File ' + AddQuotes(ScriptPath),
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+  begin
+    Log('Could not run changed-file scan script. Installing all payload files.');
+    Exit;
+  end;
+
+  if ResultCode <> 0 then
+  begin
+    Log('Changed-file scan failed with exit code ' + IntToStr(ResultCode) + '. Installing all payload files.');
+    Exit;
+  end;
+
+  if not LoadStringFromFile(OutputPath, ChangedRaw) then
+  begin
+    Log('Could not read changed-file scan output. Installing all payload files.');
+    Exit;
+  end;
+
+  ChangedPayloadFiles := Trim(ChangedRaw);
+  if ChangedPayloadFiles = '' then
+  begin
+    ChangedPayloadFiles := '*';
+    Log('Changed-file scan output was empty. Installing all payload files.');
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+function ShouldInstallPayloadFile(RelativePath: String): Boolean;
+var
+  Needle: String;
+begin
+  if ChangedPayloadFiles = '*' then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Needle := '|' + NormalizePayloadRelativePath(RelativePath) + '|';
+  Result := Pos(Needle, ChangedPayloadFiles) > 0;
+  if not Result then
+  begin
+    Log('Skipping unchanged Questarr payload file: ' + RelativePath);
+  end;
 end;
 
 function StopInstalledQuestarr(Context: String): String;
@@ -168,6 +285,10 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if not BuildChangedPayloadList() then
+  begin
+    ChangedPayloadFiles := '*';
+  end;
   Result := StopInstalledQuestarr('upgrade');
 end;
 
