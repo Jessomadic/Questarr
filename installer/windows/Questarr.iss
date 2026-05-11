@@ -276,6 +276,16 @@ begin
     '}' + #13#10 +
     'Write-Error (''Questarr files are still locked: '' + ($locked -join '', ''))' + #13#10 +
     'exit 21' + #13#10 +
+    'Start-Sleep -Seconds 1' + #13#10 +
+    'Get-CimInstance Win32_Process | ForEach-Object {' + #13#10 +
+    '  if ($_.ExecutablePath) {' + #13#10 +
+    '    try { $exe = [System.IO.Path]::GetFullPath($_.ExecutablePath) } catch { $exe = $null }' + #13#10 +
+    '    if ($exe -and $exe.StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase)) {' + #13#10 +
+    '      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue' + #13#10 +
+    '    }' + #13#10 +
+    '  }' + #13#10 +
+    '}' + #13#10 +
+    'Start-Sleep -Seconds 1' + #13#10 +
     'exit 0' + #13#10;
 
   Log('Preparing Questarr ' + Context + ' by stopping the service and install-directory processes.');
