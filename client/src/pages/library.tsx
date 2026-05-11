@@ -21,17 +21,19 @@ export default function LibraryPage() {
   const downloadSummaries = useDownloadSummary();
   const [showSearchResultsOnly, setShowSearchResultsOnly] = useState(false);
   const [showUpdateAvailableOnly, setShowUpdateAvailableOnly] = useState(false);
+  const [showHiddenOnly, setShowHiddenOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const { data: games = [], isLoading } = useQuery<Game[]>({
-    queryKey: ["/api/games", "?status=owned,completed,downloading"],
+    queryKey: ["/api/games?status=owned,completed,downloading&includeHidden=true"],
   });
 
   const libraryGames = useMemo(() => {
     let result = games;
+    result = showHiddenOnly ? result.filter((g) => g.hidden) : result.filter((g) => !g.hidden);
     if (showSearchResultsOnly) result = result.filter((g) => g.searchResultsAvailable);
     return result;
-  }, [games, showSearchResultsOnly]);
+  }, [games, showHiddenOnly, showSearchResultsOnly]);
 
   const displayedGames = useMemo(() => {
     let result = libraryGames;
@@ -88,6 +90,8 @@ export default function LibraryPage() {
               setShowDownloadsOnly={setShowDownloadsOnly}
               showUpdateAvailableOnly={showUpdateAvailableOnly}
               setShowUpdateAvailableOnly={setShowUpdateAvailableOnly}
+              showHiddenOnly={showHiddenOnly}
+              setShowHiddenOnly={setShowHiddenOnly}
             />
           }
           viewControls={{

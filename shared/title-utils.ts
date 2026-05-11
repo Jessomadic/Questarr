@@ -16,6 +16,42 @@ export function normalizeTitle(title: string): string {
     .trim();
 }
 
+function addUniqueSearchQuery(queries: string[], candidate: string): void {
+  const cleaned = candidate
+    .replaceAll(/\s+/g, " ")
+    .replace(/[:-]+$/g, "")
+    .trim();
+  if (!cleaned) return;
+  if (queries.some((query) => query.toLowerCase() === cleaned.toLowerCase())) return;
+  queries.push(cleaned);
+}
+
+/**
+ * Builds conservative indexer search attempts for a game title.
+ * The first query always preserves the user's/game's exact title; later attempts
+ * only broaden punctuation and clear edition/subtitle suffixes.
+ */
+export function buildSearchQueriesForTitle(title: string): string[] {
+  const queries: string[] = [];
+  const trimmed = title.trim();
+  addUniqueSearchQuery(queries, trimmed);
+  addUniqueSearchQuery(queries, normalizeTitle(trimmed));
+
+  const colonBase = trimmed.split(/\s*:\s*/)[0];
+  if (colonBase && colonBase !== trimmed) addUniqueSearchQuery(queries, colonBase);
+
+  const dashBase = trimmed.split(/\s+-\s+/)[0];
+  if (dashBase && dashBase !== trimmed) addUniqueSearchQuery(queries, dashBase);
+
+  const editionBase = trimmed.replace(
+    /\s+(?:complete|deluxe|ultimate|gold|goty|game of the year|definitive|remastered|remake)\s+edition$/i,
+    ""
+  );
+  if (editionBase && editionBase !== trimmed) addUniqueSearchQuery(queries, editionBase);
+
+  return queries;
+}
+
 /**
  * Common scene release tags and patterns to remove from release names.
  */

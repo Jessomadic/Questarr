@@ -12,7 +12,6 @@ import {
   releaseMatchesGame,
   normalizeTitle,
   cleanReleaseName,
-  parseJsonStringArray,
   parseReleaseMetadata,
   matchesPlatformFilter,
 } from "../shared/title-utils.js";
@@ -27,9 +26,9 @@ const downloadMissCount = new Map<string, number>();
 const DOWNLOAD_MISS_THRESHOLD = 3;
 const AUTO_SEARCH_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const XREL_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours (xREL search rate limit: 2/5s)
-const OWNED_STATUSES = new Set(["owned", "completed", "downloading"]);
+const _OWNED_STATUSES = new Set(["owned", "completed", "downloading"]);
 
-type DownloadSortBy = "seeders" | "date" | "size";
+type DownloadSortBy = "score" | "seeders" | "date" | "size";
 
 interface AutoSearchRules {
   minSeeders: number;
@@ -44,7 +43,7 @@ interface AutoSearchCategorizedItems {
 
 function getAutoSearchRules(downloadRules: string | null): AutoSearchRules {
   let minSeeders = 0;
-  let sortBy: DownloadSortBy = "seeders";
+  let sortBy: DownloadSortBy = "score";
   let visibleCategoriesSet = new Set(["main", "update", "dlc", "extra"]);
 
   if (downloadRules) {
@@ -63,13 +62,21 @@ function categorizeSearchItems(
   rules: AutoSearchRules
 ): AutoSearchCategorizedItems {
   const sortedItems = items
+    .filter((item) => item.releaseDecision?.accepted ?? true)
     .filter((item) => {
+      if (item.downloadType === "usenet") return true;
       const seeders = item.seeders ?? 0;
       return seeders >= rules.minSeeders;
     })
     .sort((a, b) => {
+      if (rules.sortBy === "score") {
+        const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+        if (scoreDelta !== 0) return scoreDelta;
+      }
       if (rules.sortBy === "seeders") {
-        return (b.seeders ?? 0) - (a.seeders ?? 0);
+        const aHealth = a.downloadType === "usenet" ? (a.grabs ?? 0) : (a.seeders ?? 0);
+        const bHealth = b.downloadType === "usenet" ? (b.grabs ?? 0) : (b.seeders ?? 0);
+        return bHealth - aHealth;
       }
       if (rules.sortBy === "date") {
         return new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime();
@@ -97,24 +104,12 @@ function categorizeSearchItems(
   );
 }
 
-function applyPreferredGroupsFilter(
-  items: Awaited<ReturnType<typeof searchAllIndexers>>["items"],
-  preferredGroups: string[]
-): Awaited<ReturnType<typeof searchAllIndexers>>["items"] {
-  if (preferredGroups.length === 0) return items;
-  const filtered = items.filter(
-    (item) =>
-      item.group && preferredGroups.some((g) => g.toLowerCase() === item.group!.toLowerCase())
-  );
-  return filtered.length > 0 ? filtered : items;
-}
-
 /**
  * Applies a strict preferred platform filter to search items.
  * PC is special: matches releases with no detected platform as well as explicit PC detections.
  * Returns the input unchanged when no preferred platform is configured.
  */
-function applyPreferredPlatformFilter(
+function _applyPreferredPlatformFilter(
   items: Awaited<ReturnType<typeof searchAllIndexers>>["items"],
   preferredPlatform: string | null | undefined
 ): Awaited<ReturnType<typeof searchAllIndexers>>["items"] {
@@ -125,7 +120,7 @@ function applyPreferredPlatformFilter(
   });
 }
 
-async function searchAndCategorizeItemsForGame(
+async function _searchAndCategorizeItemsForGame(
   game: Pick<Game, "id" | "title">,
   downloadRules: string | null
 ): Promise<AutoSearchCategorizedItems | null> {
@@ -669,225 +664,7 @@ export async function checkDownloadStatus() {
 }
 
 export async function checkAutoSearch() {
-  igdbLogger.debug("Checking auto-search for wanted games...");
-
-  try {
-    // Get wanted games grouped by user directly from storage (optimized)
-    const gamesByUser = await storage.getWantedGamesGroupedByUser();
-
-    for (const [userId, userGames] of Array.from(gamesByUser.entries())) {
-      try {
-        const settings = await storage.getUserSettings(userId);
-
-        // Skip if auto-search is disabled
-        if (!settings || !settings.autoSearchEnabled) {
-          continue;
-        }
-
-        // Check if enough time has passed since last search
-        const lastSearch = settings.lastAutoSearch
-          ? new Date(settings.lastAutoSearch).getTime()
-          : 0;
-        const timeSinceLastSearch = Date.now() - lastSearch;
-        const intervalMs = settings.searchIntervalHours * 60 * 60 * 1000;
-
-        if (timeSinceLastSearch < intervalMs) {
-          continue;
-        }
-
-        // Games are already filtered for wanted and not hidden by the storage query
-        const wantedGames = userGames;
-        const OWNED_STATUSES_ARRAY = Array.from(OWNED_STATUSES);
-        const ownedGames = await storage.getUserGames(userId, false, OWNED_STATUSES_ARRAY);
-
-        if (wantedGames.length === 0 && ownedGames.length === 0) {
-          igdbLogger.debug({ userId }, "No wanted or owned games found");
-          // Update last search time even if no games found, to avoid checking again too soon
-          await storage.updateUserSettings(userId, { lastAutoSearch: new Date() });
-          continue;
-        }
-
-        igdbLogger.info(
-          { userId, gameCount: wantedGames.length },
-          "Starting auto-search for wanted games"
-        );
-
-        let gamesWithResults = 0;
-
-        const preferredGroups = parseJsonStringArray(settings.preferredReleaseGroups);
-        const preferredPlatform = settings.preferredPlatform ?? null;
-
-        for (const game of wantedGames) {
-          try {
-            // Skip unreleased games if configured to do so
-            if (!settings.autoSearchUnreleased && game.releaseStatus !== "released") {
-              igdbLogger.debug(
-                { gameTitle: game.title, status: game.releaseStatus },
-                "Skipping auto-search for unreleased game"
-              );
-              continue;
-            }
-
-            const searchResult = await searchAndCategorizeItemsForGame(
-              game,
-              settings.downloadRules
-            );
-            if (!searchResult) {
-              // No results at all (zero results or all blacklisted) — clear the badge
-              await storage.updateGameSearchResultsAvailable(game.id, false);
-              continue;
-            }
-
-            // Apply platform filter first (strict), then preferred groups (soft preference)
-            const platformFilteredMain = applyPreferredPlatformFilter(
-              searchResult.mainItems,
-              preferredPlatform
-            );
-            const mainItems = applyPreferredGroupsFilter(platformFilteredMain, preferredGroups);
-
-            // Handle main items
-            if (mainItems.length === 0) {
-              // Results found by indexers but none survive user's filters — clear the flag
-              await storage.updateGameSearchResultsAvailable(game.id, false);
-              continue;
-            }
-
-            gamesWithResults++;
-            // Always mark as available when filtered results exist
-            await storage.updateGameSearchResultsAvailable(game.id, true);
-
-            if (mainItems.length === 1) {
-              // Single result found
-              if (settings.autoDownloadEnabled) {
-                // Auto-download if enabled
-                const item = mainItems[0];
-                const downloaders = await storage.getEnabledDownloaders();
-
-                if (downloaders.length > 0) {
-                  try {
-                    const result = await DownloaderManager.addDownloadWithFallback(downloaders, {
-                      url: item.link,
-                      title: item.title,
-                    });
-
-                    if (result && result.success && result.id && result.downloaderId) {
-                      // Track download
-                      await storage.addGameDownload({
-                        gameId: game.id,
-                        downloaderId: result.downloaderId,
-                        downloadHash: result.id,
-                        downloadTitle: item.title,
-                        status: "downloading",
-                        downloadType: item.downloadType,
-                      });
-
-                      // Update game status
-                      await storage.updateGameStatus(game.id, { status: "downloading" });
-
-                      // Notify success
-                      const groupSuffix = item.group ? ` [${item.group}]` : "";
-                      const notification = await storage.addNotification({
-                        userId,
-                        type: "success",
-                        title: "Download Started",
-                        message: `Started downloading ${game.title}${groupSuffix} via ${item.downloadType === "usenet" ? "Usenet" : "Torrent"}`,
-                        link: "/library",
-                      });
-                      notifyUser("notification", notification);
-
-                      igdbLogger.info(
-                        { gameTitle: game.title, type: item.downloadType },
-                        "Auto-downloaded result"
-                      );
-                    }
-                  } catch (error) {
-                    igdbLogger.error({ gameTitle: game.title, error }, "Failed to auto-download");
-                  }
-                }
-              } else {
-                // Just notify about availability
-                const notification = await storage.addNotification({
-                  userId,
-                  type: "success",
-                  title: "Game Available",
-                  message: `${game.title} is now available for download`,
-                  link: `modal:game:${game.id}`,
-                });
-                notifyUser("notification", notification);
-              }
-            } else if (mainItems.length > 1 && settings.notifyMultipleDownloads) {
-              // Multiple results found, notify user to choose
-              const notification = await storage.addNotification({
-                userId,
-                type: "info",
-                title: "Multiple Results Found",
-                message: `${mainItems.length} result(s) found for ${game.title}. Please review and choose.`,
-                link: `modal:game:${game.id}`,
-              });
-              notifyUser("notification", notification);
-            }
-          } catch (error) {
-            igdbLogger.error({ gameTitle: game.title, error }, "Error searching for game");
-          }
-        }
-
-        // Search owned games for update packs only.
-        for (const game of ownedGames) {
-          try {
-            // Skip unreleased games if configured to do so
-            if (!settings.autoSearchUnreleased && game.releaseStatus !== "released") {
-              continue;
-            }
-
-            const searchResult = await searchAndCategorizeItemsForGame(
-              game,
-              settings.downloadRules
-            );
-            if (!searchResult) {
-              await storage.updateGameSearchResultsAvailable(game.id, false);
-              continue;
-            }
-
-            const platformFilteredUpdate = applyPreferredPlatformFilter(
-              searchResult.updateItems,
-              preferredPlatform
-            );
-            const updateItems = applyPreferredGroupsFilter(platformFilteredUpdate, preferredGroups);
-
-            await storage.updateGameSearchResultsAvailable(game.id, updateItems.length > 0);
-
-            if (updateItems.length > 0 && settings.notifyUpdates) {
-              const notification = await storage.addNotification({
-                userId,
-                type: "info",
-                title: "Game Updates Available",
-                message: `${updateItems.length} update(s) found for ${game.title}`,
-                link: `modal:game:${game.id}`,
-              });
-              notifyUser("notification", notification);
-            }
-          } catch (error) {
-            igdbLogger.error(
-              { gameTitle: game.title, error },
-              "Error searching for owned game updates"
-            );
-          }
-        }
-
-        igdbLogger.info(
-          { userId, wantedGames: wantedGames.length, gamesWithResults },
-          "Completed auto-search"
-        );
-
-        // Update last search time
-        await storage.updateUserSettings(userId, { lastAutoSearch: new Date() });
-      } catch (error) {
-        igdbLogger.error({ userId, error }, "Error processing auto-search for user");
-      }
-    }
-  } catch (error) {
-    igdbLogger.error({ error }, "Error in checkAutoSearch");
-  }
+  igdbLogger.info("Auto-search is disabled while release scoring is rebuilt");
 }
 
 export async function checkXrelReleases() {

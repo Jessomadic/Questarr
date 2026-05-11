@@ -8,6 +8,7 @@ import { igdbClient, type IGDBGame } from "../igdb.js";
 import { type Game, type User, type Indexer, type Downloader } from "../../shared/schema.js";
 import { DownloaderManager } from "../downloaders.js";
 import { torznabClient } from "../torznab.js";
+import { newznabClient } from "../newznab.js";
 import { rssService } from "../rss.js";
 import { comparePassword } from "../auth.js";
 import { db } from "../db.js";
@@ -186,6 +187,14 @@ vi.mock("../torznab.js", () => ({
   torznabClient: {
     testConnection: vi.fn().mockResolvedValue({ success: true }),
     searchGames: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    getCategories: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+vi.mock("../newznab.js", () => ({
+  newznabClient: {
+    testConnection: vi.fn().mockResolvedValue({ success: true }),
+    search: vi.fn().mockResolvedValue([]),
     getCategories: vi.fn().mockResolvedValue([]),
   },
 }));
@@ -956,6 +965,19 @@ describe("API Routes - Extended Coverage", () => {
         expect(response.status).toBe(200);
       });
 
+      it("should test existing Newznab indexers with the Newznab client", async () => {
+        vi.mocked(storage.getIndexer).mockResolvedValue({
+          id: "idx-1",
+          protocol: "newznab",
+        } as unknown as Indexer);
+
+        const response = await request(app).post("/api/indexers/idx-1/test");
+
+        expect(response.status).toBe(200);
+        expect(newznabClient.testConnection).toHaveBeenCalled();
+        expect(torznabClient.testConnection).not.toHaveBeenCalled();
+      });
+
       it("should return 404 for missing indexer", async () => {
         vi.mocked(storage.getIndexer).mockResolvedValue(null as any);
         const response = await request(app).post("/api/indexers/nonexistent/test");
@@ -969,6 +991,21 @@ describe("API Routes - Extended Coverage", () => {
         vi.mocked(torznabClient.getCategories).mockResolvedValue([]);
         const response = await request(app).get("/api/indexers/idx-1/categories");
         expect(response.status).toBe(200);
+      });
+
+      it("should load Newznab categories with the Newznab client", async () => {
+        vi.mocked(storage.getIndexer).mockResolvedValue({
+          id: "idx-1",
+          protocol: "newznab",
+        } as unknown as Indexer);
+        vi.mocked(newznabClient.getCategories).mockResolvedValue([{ id: "4000", name: "Games" }]);
+
+        const response = await request(app).get("/api/indexers/idx-1/categories");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual([{ id: "4000", name: "Games" }]);
+        expect(newznabClient.getCategories).toHaveBeenCalled();
+        expect(torznabClient.getCategories).not.toHaveBeenCalled();
       });
 
       it("should return 404 for missing indexer", async () => {

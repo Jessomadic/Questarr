@@ -87,6 +87,7 @@ describe("Search Module - searchAllIndexers", () => {
       total: 0,
       offset: 0,
       errors: ["No indexers configured"],
+      diagnostics: { attempts: [] },
     });
   });
 
@@ -242,6 +243,44 @@ describe("Search Module - searchAllIndexers", () => {
     expect(result.items[1].title).toBe("Old Game");
   });
 
+  it("should sort accepted profile matches above newer rejected Newznab noise", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(
+      makeNewznabResponse([
+        {
+          title: "Test Game OST FLAC",
+          link: "http://usenet.example.com/noise",
+          publishDate: "2024-01-10T00:00:00Z",
+          size: 2000000,
+          grabs: 100,
+          category: ["3000"],
+          guid: "guid-noise",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+        {
+          title: "Test Game Complete Edition PC",
+          link: "http://usenet.example.com/game",
+          publishDate: "2024-01-01T00:00:00Z",
+          size: 2000000,
+          grabs: 10,
+          files: 12,
+          category: ["4000"],
+          guid: "guid-game",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+      ])
+    );
+
+    const result = await searchAllIndexers({ query: "test game" });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].title).toBe("Test Game Complete Edition PC");
+    expect(result.items[0].releaseDecision?.accepted).toBe(true);
+    expect(result.items[1].releaseDecision?.accepted).toBe(false);
+  });
+
   it("should aggregate errors from indexers", async () => {
     vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeTorznabIndexer()]);
     vi.mocked(torznabClient.searchMultipleIndexers).mockResolvedValue(
@@ -289,8 +328,8 @@ describe("Search Module - searchAllIndexers", () => {
     expect(torznabClient.searchMultipleIndexers).toHaveBeenCalledWith(
       [torznabIndexer],
       expect.objectContaining({
-        limit: 25,
-        offset: 10,
+        limit: 35,
+        offset: 0,
       })
     );
   });
@@ -437,6 +476,78 @@ describe("Search Module - searchAllIndexers", () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].files).toBeUndefined();
+  });
+
+  it("should retry a category-scoped zero-result search without categories", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers)
+      .mockResolvedValueOnce(makeNewznabResponse([]))
+      .mockResolvedValueOnce(
+        makeNewznabResponse([
+          {
+            title: "Rare Game PC-GROUP",
+            link: "http://usenet.example.com/rare",
+            publishDate: "2024-01-02T00:00:00Z",
+            size: 2000000,
+            grabs: 5,
+            category: [],
+            guid: "guid-rare",
+            indexerId: "newznab-1",
+            indexerName: "Newznab Indexer",
+          },
+        ])
+      );
+
+    const result = await searchAllIndexers({ query: "rare game" });
+
+    expect(result.items).toHaveLength(1);
+    expect(newznabClient.searchMultipleIndexers).toHaveBeenNthCalledWith(
+      2,
+      [expect.objectContaining({ name: "Newznab Indexer" })],
+      expect.objectContaining({ disableCategoryFilter: true, category: undefined })
+    );
+    expect(result.diagnostics.attempts[1]).toMatchObject({
+      categories: null,
+      rawCount: 1,
+      keptCount: 1,
+    });
+  });
+
+  it("should not retry without categories when the caller supplied an explicit category", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(makeNewznabResponse([]));
+
+    await searchAllIndexers({ query: "rare game", category: ["4050"], categoryWasExplicit: true });
+
+    expect(newznabClient.searchMultipleIndexers).toHaveBeenCalledTimes(1);
+    expect(newznabClient.searchMultipleIndexers).toHaveBeenCalledWith(
+      [expect.objectContaining({ name: "Newznab Indexer" })],
+      expect.objectContaining({ category: ["4050"], disableCategoryFilter: false })
+    );
+  });
+
+  it("should deduplicate repeated fallback results", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([
+      makeNewznabIndexer(),
+      makeNewznabIndexer({ id: "newznab-2", name: "Newznab Mirror" }),
+    ]);
+    const item = {
+      title: "Mirror Game PC-GROUP",
+      link: "http://usenet.example.com/mirror",
+      publishDate: "2024-01-02T00:00:00Z",
+      size: 2000000,
+      grabs: 5,
+      category: ["4000"],
+      guid: "same-guid",
+      indexerId: "newznab-1",
+      indexerName: "Newznab Indexer",
+    };
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(makeNewznabResponse([item]));
+
+    const result = await searchAllIndexers({ query: "mirror game" });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.total).toBe(1);
   });
 });
 

@@ -14,6 +14,9 @@ import {
   insertDownloaderSchema,
   insertNotificationSchema,
   updateUserSettingsSchema,
+  updateReleaseProfileSchema,
+  insertCustomFormatSchema,
+  updateCustomFormatSchema,
   updatePasswordSchema,
   insertRssFeedSchema,
   insertReleaseBlacklistSchema,
@@ -24,6 +27,7 @@ import {
   type Downloader,
 } from "../shared/schema.js";
 import { torznabClient } from "./torznab.js";
+import { newznabClient } from "./newznab.js";
 import { rssService } from "./rss.js";
 import { DownloaderManager } from "./downloaders.js";
 import { z } from "zod";
@@ -74,7 +78,12 @@ const upload = multer({
   },
 });
 import { searchAllIndexers, filterBlacklistedReleases } from "./search.js";
-import { xrelClient, DEFAULT_XREL_BASE, ALLOWED_XREL_DOMAINS } from "./xrel.js";
+import {
+  xrelClient,
+  DEFAULT_XREL_BASE,
+  ALLOWED_XREL_DOMAINS,
+  type XrelReleaseListItem,
+} from "./xrel.js";
 import {
   normalizeTitle,
   cleanReleaseName,
@@ -83,14 +92,25 @@ import {
   matchesPlatformFilter,
 } from "../shared/title-utils.js";
 import { categorizeDownload } from "../shared/download-categorizer.js";
+import {
+  DEFAULT_CUSTOM_FORMATS,
+  DEFAULT_RELEASE_PROFILE,
+  evaluateRelease,
+} from "../shared/release-profiles.js";
 import archiver from "archiver";
 import helmet from "helmet";
 import { steamRoutes } from "./steam-routes.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
+import { checkForUpdate, downloadUpdate, installUpdate } from "./updater.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_GAME_LIST = "public, max-age=3600, stale-while-revalidate=600";
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
+
+const updateRequestSchema = z.object({
+  channel: z.enum(["stable", "prerelease"]).optional(),
+  tagName: z.string().trim().min(1).max(128).optional(),
+});
 
 // ⚡ Bolt: Simple in-memory cache implementation to avoid external dependencies
 // Caches storage info for 30 seconds to prevent spamming downloaders
@@ -120,6 +140,134 @@ export function parseCategories(input: unknown): string[] | undefined {
   return undefined;
 }
 
+function isNewznabIndexer(indexer: Pick<Indexer, "protocol">): boolean {
+  return indexer.protocol === "newznab";
+}
+
+function testIndexerConnection(indexer: Indexer) {
+  return isNewznabIndexer(indexer)
+    ? newznabClient.testConnection(indexer)
+    : torznabClient.testConnection(indexer);
+}
+
+function getIndexerCategories(indexer: Indexer) {
+  return isNewznabIndexer(indexer)
+    ? newznabClient.getCategories(indexer)
+    : torznabClient.getCategories(indexer);
+}
+
+type XrelReleaseWithLibraryMatch = XrelReleaseListItem & {
+  libraryStatus?: string;
+  gameId?: string;
+  isWanted?: boolean;
+  matchCandidate?: unknown;
+};
+
+async function decorateXrelReleasesForUser(
+  releases: XrelReleaseListItem[],
+  userId: string,
+  options: { wantedOnly?: boolean; includeIgdbCandidates?: boolean } = {}
+): Promise<XrelReleaseWithLibraryMatch[]> {
+  const userGames = await storage.getUserGames(userId);
+  const wantedGames = userGames.filter((g) => g.status === "wanted");
+  const wantedGamesLookup = wantedGames.map((g) => {
+    const norm = normalizeTitle(g.title);
+    return {
+      game: g,
+      normalized: norm,
+      regex:
+        norm.length >= 5
+          ? new RegExp(`\\b${norm.replace(/[.*+?^${}()|[\\]/g, "\\$&")}\\b`, "i")
+          : null,
+      words: norm.split(" ").filter((w: string) => w.length > 2),
+    };
+  });
+
+  const gamesMap = new Map<string, Game>();
+  wantedGamesLookup.forEach((gl) => gamesMap.set(gl.normalized, gl.game));
+
+  const candidatesToMatch = new Set<string>();
+  const listWithMatches = releases.map((rel) => {
+    const relExtTitleNorm = rel.ext_info?.title ? normalizeTitle(rel.ext_info.title) : null;
+    const relDirCleaned = cleanReleaseName(rel.dirname);
+    const relDirNorm = normalizeTitle(relDirCleaned);
+
+    let matchedGame: Game | undefined;
+
+    if (relExtTitleNorm && gamesMap.has(relExtTitleNorm)) {
+      matchedGame = gamesMap.get(relExtTitleNorm);
+    } else if (gamesMap.has(relDirNorm)) {
+      matchedGame = gamesMap.get(relDirNorm);
+    }
+
+    if (!matchedGame) {
+      const relDirLower = rel.dirname.toLowerCase().replace(/[._-]/g, " ");
+      const relExtRegex =
+        relExtTitleNorm && relExtTitleNorm.length >= 5
+          ? new RegExp(`\\b${relExtTitleNorm.replace(/[.*+?^${}()|[\\]/g, "\\$&")}\\b`, "i")
+          : null;
+
+      const found = wantedGamesLookup.find((gl) => {
+        if (relExtTitleNorm) {
+          if (gl.regex && gl.regex.test(relExtTitleNorm)) return true;
+          if (relExtRegex && relExtRegex.test(gl.normalized)) return true;
+        }
+        if (gl.regex && gl.regex.test(relDirNorm)) return true;
+        if (gl.words.length > 0 && gl.words.every((word: string) => relDirLower.includes(word)))
+          return true;
+        return false;
+      });
+      matchedGame = found?.game;
+    }
+
+    if (!matchedGame && options.includeIgdbCandidates && !options.wantedOnly) {
+      const title = cleanReleaseName(rel.dirname);
+      if (title.length > 2) {
+        candidatesToMatch.add(title);
+      }
+    }
+
+    return {
+      ...rel,
+      libraryStatus: matchedGame?.status,
+      gameId: matchedGame?.id,
+      isWanted: matchedGame?.status === "wanted",
+    };
+  });
+
+  const visibleList = options.wantedOnly
+    ? listWithMatches.filter((item) => item.isWanted)
+    : listWithMatches;
+
+  if (!options.includeIgdbCandidates || options.wantedOnly) {
+    return visibleList;
+  }
+
+  const igdbMatches = await igdbClient.batchSearchGames(Array.from(candidatesToMatch));
+  if (igdbMatches.size > 0) {
+    routesLogger.debug(
+      {
+        count: igdbMatches.size,
+        matches: Array.from(igdbMatches.entries()).map(([k, v]) => `${k} => ${v?.name}`),
+      },
+      "IGDB Matches found"
+    );
+  }
+
+  return visibleList.map((item) => {
+    if (item.libraryStatus) return item;
+
+    const title = cleanReleaseName(item.dirname);
+    const match = igdbMatches.get(title);
+    if (!match) return item;
+
+    return {
+      ...item,
+      matchCandidate: igdbClient.formatGameData(match),
+    };
+  });
+}
+
 // Helper function for aggregated indexer search
 async function handleAggregatedIndexerSearch(req: Request, res: Response) {
   try {
@@ -139,19 +287,32 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       return res.status(400).json({ error: "Search query required" });
     }
 
-    const { items, total, errors } = await searchAllIndexers({
+    const gameId = req.query.gameId as string | undefined;
+    const userId = req.user?.id;
+    const game = gameId ? await storage.getGame(gameId) : undefined;
+    const userOwnsGame = !!game && !!userId && game.userId === userId;
+    const [releaseProfile, customFormats] = userId
+      ? await Promise.all([
+          storage.getDefaultReleaseProfile?.(userId) ?? DEFAULT_RELEASE_PROFILE,
+          storage.getCustomFormats?.(userId) ?? DEFAULT_CUSTOM_FORMATS,
+        ])
+      : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
+
+    const { items, total, errors, diagnostics } = await searchAllIndexers({
       query: query.trim(),
+      gameTitle: userOwnsGame ? game.title : query.trim(),
       category: categories,
+      categoryWasExplicit: categories !== undefined,
       limit,
       offset,
+      releaseProfile,
+      customFormats,
     });
 
     // Filter out blacklisted releases when a gameId context is provided
-    const gameId = req.query.gameId as string | undefined;
     let filteredItems = items;
     let blacklistedCount = 0;
     if (gameId && req.user) {
-      const game = await storage.getGame(gameId);
       if (game && game.userId === req.user.id) {
         const [blacklisted, userSettings] = await Promise.all([
           storage.getReleaseBlacklistSet(gameId),
@@ -172,8 +333,11 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
                 return matchesPlatformFilter(platform, preferredPlatform);
               })
             : filteredItems;
+          const acceptedItems = platformFiltered.filter(
+            (item) => item.releaseDecision?.accepted ?? true
+          );
           storage
-            .updateGameSearchResultsAvailable(game.id, platformFiltered.length > 0)
+            .updateGameSearchResultsAvailable(game.id, acceptedItems.length > 0)
             .catch((err) => routesLogger.warn({ err }, "Failed to update searchResultsAvailable"));
         }
       }
@@ -184,6 +348,11 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       total,
       offset,
       ...(blacklistedCount > 0 ? { blacklistedCount } : {}),
+      diagnostics: {
+        ...diagnostics,
+        totalBeforeBlacklist: total,
+        blacklistedCount,
+      },
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
@@ -413,6 +582,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // For readiness checks (e.g., database connectivity), use the /api/ready endpoint.
     res.status(200).json({ status: "ok" });
   });
+
+  app.get("/api/system/updates", authenticateToken, async (req, res) => {
+    try {
+      const parsed = updateRequestSchema.parse({
+        channel: req.query.channel,
+        tagName: req.query.tagName,
+      });
+      const result = await checkForUpdate(parsed);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid update request", details: error.errors });
+      }
+
+      routesLogger.error({ error }, "Failed to check for updates");
+      res.status(500).json({ error: "Failed to check for updates" });
+    }
+  });
+
+  app.post(
+    "/api/system/updates/download",
+    authenticateToken,
+    sensitiveEndpointLimiter,
+    async (req, res) => {
+      try {
+        const parsed = updateRequestSchema.parse(req.body ?? {});
+        const result = await downloadUpdate(parsed);
+        res.json(result);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: "Invalid update request", details: error.errors });
+        }
+
+        routesLogger.error({ error }, "Failed to download update");
+        res.status(500).json({
+          error: error instanceof Error ? error.message : "Failed to download update",
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/api/system/updates/install",
+    authenticateToken,
+    sensitiveEndpointLimiter,
+    async (req, res) => {
+      try {
+        const parsed = updateRequestSchema.parse(req.body ?? {});
+        const result = await installUpdate(parsed);
+        res.json(result);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: "Invalid update request", details: error.errors });
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Failed to start the silent installer";
+        routesLogger.error({ error }, "Failed to start silent update");
+        res
+          .status(message.includes("only supported on Windows") ? 409 : 500)
+          .json({ error: message });
+      }
+    }
+  );
 
   // SSL Settings - Get
   app.get("/api/settings/ssl", authenticateToken, async (req, res) => {
@@ -1797,11 +2030,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
     handleAggregatedIndexerSearch
   );
 
+  app.get("/api/release-profiles", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      res.json(await storage.getReleaseProfiles(userId));
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching release profiles");
+      res.status(500).json({ error: "Failed to fetch release profiles" });
+    }
+  });
+
+  app.patch("/api/release-profiles/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const updates = updateReleaseProfileSchema.parse(req.body);
+      const profile = await storage.updateReleaseProfile(userId, req.params.id, updates);
+      if (!profile) return res.status(404).json({ error: "Release profile not found" });
+      res.json(profile);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res
+          .status(400)
+          .json({ error: "Invalid release profile data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error updating release profile");
+      res.status(500).json({ error: "Failed to update release profile" });
+    }
+  });
+
+  app.get("/api/custom-formats", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      res.json(await storage.getCustomFormats(userId));
+    } catch (error) {
+      routesLogger.error({ error }, "error fetching custom formats");
+      res.status(500).json({ error: "Failed to fetch custom formats" });
+    }
+  });
+
+  app.post("/api/custom-formats", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const format = insertCustomFormatSchema.parse(req.body);
+      res.status(201).json(await storage.addCustomFormat(userId, format));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid custom format data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error creating custom format");
+      res.status(500).json({ error: "Failed to create custom format" });
+    }
+  });
+
+  app.patch("/api/custom-formats/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const updates = updateCustomFormatSchema.parse(req.body);
+      const format = await storage.updateCustomFormat(userId, req.params.id, updates);
+      if (!format) return res.status(404).json({ error: "Custom format not found" });
+      res.json(format);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid custom format data", details: error.errors });
+      }
+      routesLogger.error({ error }, "error updating custom format");
+      res.status(500).json({ error: "Failed to update custom format" });
+    }
+  });
+
+  app.delete("/api/custom-formats/:id", async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+      const removed = await storage.removeCustomFormat(userId, req.params.id);
+      if (!removed) return res.status(404).json({ error: "Custom format not found" });
+      res.status(204).send();
+    } catch (error) {
+      routesLogger.error({ error }, "error deleting custom format");
+      res.status(500).json({ error: "Failed to delete custom format" });
+    }
+  });
+
+  app.post("/api/search/evaluate", async (req, res) => {
+    const schema = z.object({
+      title: z.string().min(1),
+      gameTitle: z.string().min(1),
+      category: z.array(z.string()).optional(),
+      downloadType: z.enum(["torrent", "usenet"]).default("usenet"),
+      size: z.number().optional(),
+      seeders: z.number().optional(),
+      grabs: z.number().optional(),
+      files: z.number().optional(),
+      poster: z.string().optional(),
+      uploader: z.string().optional(),
+      group: z.string().optional(),
+      preferredPlatform: z.string().nullable().optional(),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid release evaluation data" });
+    }
+
+    const userId = req.user?.id;
+    const [profile, formats] = userId
+      ? await Promise.all([
+          storage.getDefaultReleaseProfile(userId),
+          storage.getCustomFormats(userId),
+        ])
+      : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
+    res.json(evaluateRelease(parsed.data, profile, formats));
+  });
+
   // Test indexer connection with provided configuration (doesn't require saving first)
   app.post("/api/indexers/test", async (req, res) => {
     try {
-      const { name, url, apiKey, enabled, priority, categories, rssEnabled, autoSearchEnabled } =
-        req.body;
+      const {
+        name,
+        url,
+        apiKey,
+        protocol,
+        enabled,
+        priority,
+        categories,
+        rssEnabled,
+        autoSearchEnabled,
+      } = req.body;
 
       if (!url || !apiKey) {
         return res.status(400).json({ error: "URL and API key are required" });
@@ -1817,7 +2176,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name: name || "Test Connection",
         url,
         apiKey,
-        protocol: "torznab",
+        protocol: protocol === "newznab" ? "newznab" : "torznab",
         enabled: enabled ?? true,
         priority: priority ?? 1,
         categories: categories || [],
@@ -1827,7 +2186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updatedAt: new Date(),
       };
 
-      const result = await torznabClient.testConnection(tempIndexer);
+      const result = await testIndexerConnection(tempIndexer);
       res.json(result);
     } catch (error) {
       routesLogger.error({ error }, "error testing indexer");
@@ -1847,7 +2206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Indexer not found" });
       }
 
-      const result = await torznabClient.testConnection(indexer);
+      const result = await testIndexerConnection(indexer);
       res.json(result);
     } catch (error) {
       routesLogger.error({ error }, "error testing indexer");
@@ -1867,7 +2226,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Indexer not found" });
       }
 
-      const categories = await torznabClient.getCategories(indexer);
+      const categories = await getIndexerCategories(indexer);
       res.json(categories);
     } catch (error) {
       routesLogger.error({ error }, "error getting categories");
@@ -1896,6 +2255,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: parseInt(limit as string) || 50,
         offset: parseInt(offset as string) || 0,
       };
+
+      if (isNewznabIndexer(indexer)) {
+        const items = await newznabClient.search(indexer, searchParams);
+        res.json({ items, total: items.length, offset: searchParams.offset });
+        return;
+      }
 
       const results = await torznabClient.searchGames(indexer, searchParams);
       res.json(results);
@@ -2786,6 +3151,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!settings) {
         settings = await storage.createUserSettings({ userId });
       }
+      await storage.ensureReleaseScoringDefaults?.(userId);
+      if (settings.autoSearchEnabled || settings.autoDownloadEnabled) {
+        settings = { ...settings, autoSearchEnabled: false, autoDownloadEnabled: false };
+      }
 
       res.json(settings);
     } catch (error) {
@@ -2907,17 +3276,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/xrel/latest", async (req, res, next) => {
     try {
       const page = req.query.page ? parseInt(String(req.query.page), 10) : 1;
+      const perPage = req.query.perPage
+        ? Math.min(100, Math.max(5, parseInt(String(req.query.perPage), 10)))
+        : 20;
+      const source =
+        req.query.source === "p2p" || req.query.source === "all" ? req.query.source : "scene";
+      const archive =
+        typeof req.query.archive === "string" && /^\d{4}-\d{2}$/.test(req.query.archive)
+          ? req.query.archive
+          : undefined;
+      const sceneCategory =
+        typeof req.query.sceneCategory === "string" && req.query.sceneCategory.trim()
+          ? req.query.sceneCategory.trim()
+          : undefined;
+      const p2pCategoryId =
+        typeof req.query.p2pCategoryId === "string" && req.query.p2pCategoryId.trim()
+          ? req.query.p2pCategoryId.trim()
+          : undefined;
+      const wantedOnly = req.query.wantedOnly === "true" || req.query.wantedOnly === "1";
       const baseUrl =
         (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
         process.env.XREL_API_BASE ||
         DEFAULT_XREL_BASE;
 
-      // Use getLatestGames which handles pagination correctly across game-filtered results
-      const result = await xrelClient.getLatestGames({
-        page,
-        perPage: 20,
-        baseUrl,
-      });
+      const result =
+        source === "p2p"
+          ? await xrelClient.getP2pReleases({
+              page,
+              perPage,
+              baseUrl,
+              categoryId: p2pCategoryId,
+            })
+          : source === "all"
+            ? await (async () => {
+                const [sceneResult, p2pResult] = await Promise.all([
+                  archive || sceneCategory
+                    ? xrelClient.getLatestReleases({
+                        page,
+                        perPage,
+                        baseUrl,
+                        extInfoType: "game",
+                        archive,
+                        categoryName: sceneCategory,
+                      })
+                    : xrelClient.getLatestGames({ page, perPage, baseUrl }),
+                  xrelClient.getP2pReleases({
+                    page,
+                    perPage,
+                    baseUrl,
+                    categoryId: p2pCategoryId,
+                  }),
+                ]);
+                const list = [...sceneResult.list, ...p2pResult.list]
+                  .sort((a, b) => b.time - a.time)
+                  .slice(0, perPage);
+                return {
+                  list,
+                  pagination: {
+                    current_page: page,
+                    per_page: perPage,
+                    total_pages: Math.max(
+                      sceneResult.pagination.total_pages,
+                      p2pResult.pagination.total_pages
+                    ),
+                  },
+                  total_count: sceneResult.total_count + p2pResult.total_count,
+                };
+              })()
+            : archive || sceneCategory
+              ? await xrelClient.getLatestReleases({
+                  page,
+                  perPage,
+                  baseUrl,
+                  extInfoType: "game",
+                  archive,
+                  categoryName: sceneCategory,
+                })
+              : await xrelClient.getLatestGames({
+                  page,
+                  perPage,
+                  baseUrl,
+                });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const userId = (req as any).user.id;
@@ -3032,7 +3471,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return item;
       });
 
-      res.json({ ...result, list: finallist });
+      res.json({
+        ...result,
+        list: wantedOnly ? finallist.filter((item) => item.isWanted) : finallist,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/xrel/categories", async (_req, res, next) => {
+    try {
+      const baseUrl =
+        (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
+        process.env.XREL_API_BASE ||
+        DEFAULT_XREL_BASE;
+      const categories = await xrelClient.getReleaseCategories({ baseUrl });
+      res.json(categories);
     } catch (error) {
       next(error);
     }
@@ -3046,6 +3501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const scene = req.query.scene !== "false" && req.query.scene !== "0";
       const p2p = req.query.p2p === "true" || req.query.p2p === "1";
+      const wantedOnly = req.query.wantedOnly === "true" || req.query.wantedOnly === "1";
       const limit = req.query.limit
         ? Math.min(100, Math.max(1, parseInt(String(req.query.limit), 10)))
         : 25;
@@ -3054,7 +3510,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         process.env.XREL_API_BASE ||
         DEFAULT_XREL_BASE;
       const list = await xrelClient.searchReleases(q, { scene, p2p, limit, baseUrl });
-      res.json({ results: list });
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.json({ results: wantedOnly ? [] : list });
+      }
+      const results = await decorateXrelReleasesForUser(list, userId, {
+        wantedOnly,
+        includeIgdbCandidates: false,
+      });
+      res.json({ results });
     } catch (error) {
       next(error);
     }

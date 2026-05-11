@@ -3,9 +3,14 @@
 #define MyAppVersion GetEnv("QUESTARR_VERSION")
 #define MySourceDir GetEnv("QUESTARR_SOURCE_DIR")
 #define MyOutputDir GetEnv("QUESTARR_OUTPUT_DIR")
+#define MyFilesInclude GetEnv("QUESTARR_FILES_INCLUDE")
 
 #if MyAppVersion == ""
   #define MyAppVersion "0.0.0"
+#endif
+
+#if MyFilesInclude == ""
+  #error QUESTARR_FILES_INCLUDE must point to the generated installer file list.
 #endif
 
 [Setup]
@@ -33,7 +38,9 @@ Name: "{commonappdata}\Questarr\data"
 Name: "{commonappdata}\Questarr\logs"
 
 [Files]
-Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\questarr-install-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceDir}\questarr-install-manifest.json"; Flags: dontcopy
+#include MyFilesInclude
 
 [Icons]
 Name: "{group}\Questarr"; Filename: "http://localhost:5000"
@@ -63,6 +70,138 @@ begin
   Result := '''' + Escaped + '''';
 end;
 
+var
+  ChangedPayloadFiles: String;
+
+function NormalizePayloadRelativePath(Value: String): String;
+begin
+  Result := Lowercase(Value);
+  StringChangeEx(Result, '/', '\', True);
+end;
+
+function BuildChangedPayloadList(): Boolean;
+var
+  ScriptPath: String;
+  OutputPath: String;
+  ManifestPath: String;
+  Script: String;
+  ResultCode: Integer;
+  ChangedRaw: AnsiString;
+  InstallDir: String;
+begin
+  Result := False;
+  ChangedPayloadFiles := '*';
+  InstallDir := ExpandConstant('{app}');
+  ScriptPath := ExpandConstant('{tmp}\questarr-changed-payload.ps1');
+  OutputPath := ExpandConstant('{tmp}\questarr-changed-payload.txt');
+  ExtractTemporaryFile('questarr-install-manifest.json');
+  ManifestPath := ExpandConstant('{tmp}\questarr-install-manifest.json');
+
+  Script :=
+    '$ErrorActionPreference = ''Stop''' + #13#10 +
+    '$manifestPath = ' + PowerShellSingleQuote(ManifestPath) + #13#10 +
+    '$installDir = [System.IO.Path]::GetFullPath(' + PowerShellSingleQuote(InstallDir) + ')' + #13#10 +
+    '$outputPath = ' + PowerShellSingleQuote(OutputPath) + #13#10 +
+    '$oldManifestPath = Join-Path $installDir ''questarr-install-manifest.json''' + #13#10 +
+    'function Write-AllPayloadChanged { Set-Content -LiteralPath $outputPath -Value ''*'' -Encoding ASCII }' + #13#10 +
+    'function Normalize-QuestarrPath([string]$value) { $value.Replace(''/'', ''\'').ToLowerInvariant() }' + #13#10 +
+    'if (-not (Test-Path -LiteralPath $oldManifestPath -PathType Leaf)) { Write-AllPayloadChanged; exit 0 }' + #13#10 +
+    'try {' + #13#10 +
+    '  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json' + #13#10 +
+    '  $oldManifest = Get-Content -LiteralPath $oldManifestPath -Raw | ConvertFrom-Json' + #13#10 +
+    '} catch {' + #13#10 +
+    '  Write-AllPayloadChanged; exit 0' + #13#10 +
+    '}' + #13#10 +
+    '$newFiles = @($manifest.files)' + #13#10 +
+    '$oldFiles = @{}' + #13#10 +
+    'foreach ($entry in @($oldManifest.files)) {' + #13#10 +
+    '  $relative = [string]$entry.path' + #13#10 +
+    '  if ([string]::IsNullOrWhiteSpace($relative)) { continue }' + #13#10 +
+    '  $oldFiles[(Normalize-QuestarrPath $relative)] = [pscustomobject]@{ Size = [int64]$entry.size; Sha256 = ([string]$entry.sha256).ToLowerInvariant() }' + #13#10 +
+    '}' + #13#10 +
+    '$changed = New-Object System.Collections.Generic.List[string]' + #13#10 +
+    'foreach ($entry in $newFiles) {' + #13#10 +
+    '  $relative = [string]$entry.path' + #13#10 +
+    '  if ([string]::IsNullOrWhiteSpace($relative)) { continue }' + #13#10 +
+    '  $normalizedPath = Normalize-QuestarrPath $relative' + #13#10 +
+    '  if (-not $oldFiles.ContainsKey($normalizedPath)) { $changed.Add($relative); continue }' + #13#10 +
+    '  $oldEntry = $oldFiles[$normalizedPath]' + #13#10 +
+    '  if ($oldEntry.Size -ne [int64]$entry.size) { $changed.Add($relative); continue }' + #13#10 +
+    '  if ($oldEntry.Sha256 -ne ([string]$entry.sha256).ToLowerInvariant()) { $changed.Add($relative); continue }' + #13#10 +
+    '  $relativeForDisk = $relative.Replace(''/'', [System.IO.Path]::DirectorySeparatorChar)' + #13#10 +
+    '  $targetPath = Join-Path $installDir $relativeForDisk' + #13#10 +
+    '  if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) { $changed.Add($relative); continue }' + #13#10 +
+    '}' + #13#10 +
+    '$normalized = @($changed | ForEach-Object { $_.Replace(''/'', ''\'').ToLowerInvariant() })' + #13#10 +
+    'if ($newFiles.Count -gt 0 -and $changed.Count -eq $newFiles.Count) {' + #13#10 +
+    '  $payload = ''*''' + #13#10 +
+    '} else {' + #13#10 +
+    '  $payload = ''|'' + ($normalized -join ''|'') + ''|''' + #13#10 +
+    '}' + #13#10 +
+    'Set-Content -LiteralPath $outputPath -Value $payload -Encoding ASCII' + #13#10;
+
+  Log('Building Questarr changed-file list before extraction.');
+  if not SaveStringToFile(ScriptPath, Script, False) then
+  begin
+    Log('Could not write changed-file scan script. Installing all payload files.');
+    Exit;
+  end;
+
+  if not Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -File ' + AddQuotes(ScriptPath),
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then
+  begin
+    Log('Could not run changed-file scan script. Installing all payload files.');
+    Exit;
+  end;
+
+  if ResultCode <> 0 then
+  begin
+    Log('Changed-file scan failed with exit code ' + IntToStr(ResultCode) + '. Installing all payload files.');
+    Exit;
+  end;
+
+  if not LoadStringFromFile(OutputPath, ChangedRaw) then
+  begin
+    Log('Could not read changed-file scan output. Installing all payload files.');
+    Exit;
+  end;
+
+  ChangedPayloadFiles := ChangedRaw;
+  ChangedPayloadFiles := Trim(ChangedPayloadFiles);
+  if ChangedPayloadFiles = '' then
+  begin
+    ChangedPayloadFiles := '*';
+    Log('Changed-file scan output was empty. Installing all payload files.');
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+function ShouldInstallPayloadFile(RelativePath: String): Boolean;
+var
+  Needle: String;
+begin
+  if ChangedPayloadFiles = '*' then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Needle := '|' + NormalizePayloadRelativePath(RelativePath) + '|';
+  Result := Pos(Needle, ChangedPayloadFiles) > 0;
+  if not Result then
+  begin
+    Log('Skipping unchanged Questarr payload file: ' + RelativePath);
+  end;
+end;
+
 function StopInstalledQuestarr(Context: String): String;
 var
   ScriptPath: String;
@@ -78,14 +217,65 @@ begin
     '$serviceName = ''Questarr''' + #13#10 +
     '$installDir = [System.IO.Path]::GetFullPath(' + PowerShellSingleQuote(InstallDir) + ')' + #13#10 +
     'if (-not $installDir.EndsWith([string][System.IO.Path]::DirectorySeparatorChar)) { $installDir += [System.IO.Path]::DirectorySeparatorChar }' + #13#10 +
+    'function Get-QuestarrProcess {' + #13#10 +
+    '  Get-CimInstance Win32_Process | Where-Object {' + #13#10 +
+    '    $exeMatches = $false' + #13#10 +
+    '    $cmdMatches = $false' + #13#10 +
+    '    if ($_.ExecutablePath) {' + #13#10 +
+    '      try { $exeMatches = [System.IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($installDir, [System.StringComparison]::OrdinalIgnoreCase) } catch { }' + #13#10 +
+    '    }' + #13#10 +
+    '    if ($_.CommandLine) {' + #13#10 +
+    '      $cmdMatches = $_.CommandLine.IndexOf($installDir, [System.StringComparison]::OrdinalIgnoreCase) -ge 0' + #13#10 +
+    '    }' + #13#10 +
+    '    ($exeMatches -or $cmdMatches) -and $_.ProcessId -ne $PID' + #13#10 +
+    '  }' + #13#10 +
+    '}' + #13#10 +
+    'function Stop-QuestarrProcess {' + #13#10 +
+    '  Get-QuestarrProcess | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }' + #13#10 +
+    '}' + #13#10 +
     '$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue' + #13#10 +
     'if ($service) {' + #13#10 +
     '  if ($service.Status -ne ''Stopped'') {' + #13#10 +
     '    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue' + #13#10 +
+    '    & sc.exe stop $serviceName | Out-Null' + #13#10 +
     '    try { $service.WaitForStatus(''Stopped'', ''00:00:30'') } catch { }' + #13#10 +
     '  }' + #13#10 +
     '  & sc.exe delete $serviceName | Out-Null' + #13#10 +
     '}' + #13#10 +
+    'Stop-QuestarrProcess' + #13#10 +
+    'for ($attempt = 1; $attempt -le 30; $attempt++) {' + #13#10 +
+    '  $remaining = @(Get-QuestarrProcess)' + #13#10 +
+    '  if ($remaining.Count -eq 0) { break }' + #13#10 +
+    '  Stop-QuestarrProcess' + #13#10 +
+    '  Start-Sleep -Seconds 1' + #13#10 +
+    '}' + #13#10 +
+    '$remaining = @(Get-QuestarrProcess)' + #13#10 +
+    'if ($remaining.Count -gt 0) {' + #13#10 +
+    '  Write-Error (''Questarr processes are still running: '' + (($remaining | ForEach-Object { $_.ProcessId }) -join '', ''))' + #13#10 +
+    '  exit 20' + #13#10 +
+    '}' + #13#10 +
+    '$lockProbeFiles = @(''bin\node.exe'', ''node_modules\better-sqlite3\build\Release\better_sqlite3.node'', ''node_modules\bufferutil\prebuilds\win32-x64\bufferutil.node'')' + #13#10 +
+    'for ($attempt = 1; $attempt -le 30; $attempt++) {' + #13#10 +
+    '  $locked = @()' + #13#10 +
+    '  foreach ($relativePath in $lockProbeFiles) {' + #13#10 +
+    '    $path = Join-Path $installDir $relativePath' + #13#10 +
+    '    if (Test-Path -LiteralPath $path) {' + #13#10 +
+    '      $stream = $null' + #13#10 +
+    '      try {' + #13#10 +
+    '        $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)' + #13#10 +
+    '      } catch {' + #13#10 +
+    '        $locked += $path' + #13#10 +
+    '      } finally {' + #13#10 +
+    '        if ($stream) { $stream.Dispose() }' + #13#10 +
+    '      }' + #13#10 +
+    '    }' + #13#10 +
+    '  }' + #13#10 +
+    '  if ($locked.Count -eq 0) { exit 0 }' + #13#10 +
+    '  Stop-QuestarrProcess' + #13#10 +
+    '  Start-Sleep -Seconds 1' + #13#10 +
+    '}' + #13#10 +
+    'Write-Error (''Questarr files are still locked: '' + ($locked -join '', ''))' + #13#10 +
+    'exit 21' + #13#10 +
     'Start-Sleep -Seconds 1' + #13#10 +
     'Get-CimInstance Win32_Process | ForEach-Object {' + #13#10 +
     '  if ($_.ExecutablePath) {' + #13#10 +
@@ -127,6 +317,10 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if not BuildChangedPayloadList() then
+  begin
+    ChangedPayloadFiles := '*';
+  end;
   Result := StopInstalledQuestarr('upgrade');
 end;
 

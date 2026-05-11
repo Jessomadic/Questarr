@@ -16,6 +16,11 @@ import {
   type UserSettings,
   type InsertUserSettings,
   type UpdateUserSettings,
+  type ReleaseProfileRow,
+  type UpdateReleaseProfile,
+  type CustomFormatRow,
+  type InsertCustomFormat,
+  type UpdateCustomFormat,
   type XrelNotifiedRelease,
   type InsertXrelNotifiedRelease,
   type RssFeed,
@@ -31,6 +36,8 @@ import {
   notifications,
   gameDownloads,
   userSettings,
+  releaseProfiles,
+  customFormats,
   systemConfig,
   xrelNotifiedReleases,
   rssFeeds,
@@ -41,6 +48,13 @@ import { randomUUID } from "crypto";
 import { db } from "./db.js";
 import { eq, like, or, sql, desc, and, inArray, type SQL } from "drizzle-orm";
 import { categorizeDownload } from "../shared/download-categorizer.js";
+import {
+  DEFAULT_CUSTOM_FORMATS,
+  DEFAULT_RELEASE_PROFILE,
+  type CustomFormat,
+  type ReleaseProfile,
+} from "../shared/release-profiles.js";
+import { parseJsonStringArray } from "../shared/title-utils.js";
 
 const isUpdateDownload = (title: string): boolean =>
   categorizeDownload(title).category === "update";
@@ -57,6 +71,71 @@ function resolveTopStatus(
   b: DownloadSummary["topStatus"]
 ): DownloadSummary["topStatus"] {
   return (STATUS_PRIORITY[a] ?? 0) >= (STATUS_PRIORITY[b] ?? 0) ? a : b;
+}
+
+function toReleaseProfile(row: ReleaseProfileRow): ReleaseProfile {
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    minScore: row.minScore,
+    preferredPlatform: row.preferredPlatform,
+    protocolPreference:
+      row.protocolPreference === "torrent" || row.protocolPreference === "usenet"
+        ? row.protocolPreference
+        : "either",
+    requiredTerms: row.requiredTerms ?? [],
+    ignoredTerms: row.ignoredTerms ?? [],
+    minSeeders: row.minSeeders,
+    maxSize: row.maxSize,
+  };
+}
+
+function toCustomFormat(row: CustomFormatRow): CustomFormat {
+  const conditionType =
+    row.conditionType === "title" ||
+    row.conditionType === "release_group" ||
+    row.conditionType === "uploader" ||
+    row.conditionType === "category" ||
+    row.conditionType === "protocol"
+      ? row.conditionType
+      : "builtin";
+  const matcherMode =
+    row.matcherMode === "contains" || row.matcherMode === "exact" || row.matcherMode === "regex"
+      ? row.matcherMode
+      : "builtin";
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    description: row.description,
+    conditionType,
+    matcherMode,
+    matcherValue: row.matcherValue,
+    score: row.score,
+    enabled: row.enabled,
+    hardReject: row.hardReject,
+    builtIn: row.builtIn,
+  };
+}
+
+function defaultProfileValues(userId: string): ReleaseProfileRow {
+  return {
+    id: randomUUID(),
+    userId,
+    name: DEFAULT_RELEASE_PROFILE.name,
+    minScore: DEFAULT_RELEASE_PROFILE.minScore,
+    preferredPlatform: DEFAULT_RELEASE_PROFILE.preferredPlatform,
+    protocolPreference: DEFAULT_RELEASE_PROFILE.protocolPreference,
+    requiredTerms: DEFAULT_RELEASE_PROFILE.requiredTerms,
+    ignoredTerms: DEFAULT_RELEASE_PROFILE.ignoredTerms,
+    minSeeders: DEFAULT_RELEASE_PROFILE.minSeeders,
+    maxSize: DEFAULT_RELEASE_PROFILE.maxSize,
+    isDefault: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
 }
 
 export interface IStorage {
@@ -157,6 +236,24 @@ export interface IStorage {
     updates: UpdateUserSettings
   ): Promise<UserSettings | undefined>;
 
+  // Release profile/custom format methods
+  getReleaseProfiles(userId: string): Promise<ReleaseProfile[]>;
+  getDefaultReleaseProfile(userId: string): Promise<ReleaseProfile>;
+  updateReleaseProfile(
+    userId: string,
+    id: string,
+    updates: UpdateReleaseProfile
+  ): Promise<ReleaseProfile | undefined>;
+  getCustomFormats(userId: string): Promise<CustomFormat[]>;
+  addCustomFormat(userId: string, format: InsertCustomFormat): Promise<CustomFormat>;
+  updateCustomFormat(
+    userId: string,
+    id: string,
+    updates: UpdateCustomFormat
+  ): Promise<CustomFormat | undefined>;
+  removeCustomFormat(userId: string, id: string): Promise<boolean>;
+  ensureReleaseScoringDefaults(userId: string): Promise<void>;
+
   // xREL notified releases (for notifications + "on xREL" indicator)
   addXrelNotifiedRelease(insert: InsertXrelNotifiedRelease): Promise<XrelNotifiedRelease>;
   hasXrelNotifiedRelease(gameId: string, xrelReleaseId: string): Promise<boolean>;
@@ -179,6 +276,8 @@ export class MemStorage implements IStorage {
   private notifications: Map<string, Notification>;
   private gameDownloads: Map<string, GameDownload>;
   private userSettings: Map<string, UserSettings>;
+  private releaseProfiles: Map<string, ReleaseProfileRow>;
+  private customFormats: Map<string, CustomFormatRow>;
   private systemConfig: Map<string, string>;
   private xrelNotified: Map<string, XrelNotifiedRelease>;
   private rssFeeds: Map<string, RssFeed>;
@@ -193,6 +292,8 @@ export class MemStorage implements IStorage {
     this.notifications = new Map();
     this.gameDownloads = new Map();
     this.userSettings = new Map();
+    this.releaseProfiles = new Map();
+    this.customFormats = new Map();
     this.systemConfig = new Map();
     this.xrelNotified = new Map();
     this.rssFeeds = new Map();
@@ -871,8 +972,8 @@ export class MemStorage implements IStorage {
     const settings: UserSettings = {
       id,
       userId: insertSettings.userId,
-      autoSearchEnabled: insertSettings.autoSearchEnabled ?? true,
-      autoDownloadEnabled: insertSettings.autoDownloadEnabled ?? false,
+      autoSearchEnabled: false,
+      autoDownloadEnabled: false,
       notifyMultipleDownloads: insertSettings.notifyMultipleDownloads ?? true,
       notifyUpdates: insertSettings.notifyUpdates ?? true,
       searchIntervalHours: insertSettings.searchIntervalHours ?? 6,
@@ -883,12 +984,11 @@ export class MemStorage implements IStorage {
       xrelP2pReleases: insertSettings.xrelP2pReleases ?? false,
       autoSearchUnreleased: insertSettings.autoSearchUnreleased ?? false,
       steamSyncFailures: 0,
-      preferredReleaseGroups: insertSettings.preferredReleaseGroups ?? null,
-      filterByPreferredGroups: insertSettings.filterByPreferredGroups ?? false,
       preferredPlatform: insertSettings.preferredPlatform ?? null,
       updatedAt: new Date(),
     };
     this.userSettings.set(id, settings);
+    await this.ensureReleaseScoringDefaults(insertSettings.userId);
     return settings;
   }
 
@@ -902,10 +1002,126 @@ export class MemStorage implements IStorage {
     const updated: UserSettings = {
       ...existing,
       ...updates,
+      autoSearchEnabled: false,
+      autoDownloadEnabled: false,
       updatedAt: new Date(),
     };
     this.userSettings.set(existing.id, updated);
     return updated;
+  }
+
+  async ensureReleaseScoringDefaults(userId: string): Promise<void> {
+    const existingProfiles = Array.from(this.releaseProfiles.values()).filter(
+      (profile) => profile.userId === userId
+    );
+    if (existingProfiles.length === 0) {
+      const profile = defaultProfileValues(userId);
+      this.releaseProfiles.set(profile.id, profile);
+    }
+
+    const existingFormats = new Set(
+      Array.from(this.customFormats.values())
+        .filter((format) => format.userId === userId && format.builtIn)
+        .map((format) => format.id)
+    );
+    for (const format of DEFAULT_CUSTOM_FORMATS) {
+      if (existingFormats.has(format.id)) continue;
+      const row: CustomFormatRow = {
+        id: format.id,
+        userId,
+        name: format.name,
+        description: format.description,
+        conditionType: format.conditionType,
+        matcherMode: format.matcherMode,
+        matcherValue: format.matcherValue,
+        score: format.score,
+        enabled: format.enabled,
+        hardReject: format.hardReject,
+        builtIn: format.builtIn,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.customFormats.set(`${userId}:${row.id}`, row);
+    }
+  }
+
+  async getReleaseProfiles(userId: string): Promise<ReleaseProfile[]> {
+    await this.ensureReleaseScoringDefaults(userId);
+    return Array.from(this.releaseProfiles.values())
+      .filter((profile) => profile.userId === userId)
+      .map(toReleaseProfile);
+  }
+
+  async getDefaultReleaseProfile(userId: string): Promise<ReleaseProfile> {
+    const profiles = await this.getReleaseProfiles(userId);
+    return profiles[0] ?? DEFAULT_RELEASE_PROFILE;
+  }
+
+  async updateReleaseProfile(
+    userId: string,
+    id: string,
+    updates: UpdateReleaseProfile
+  ): Promise<ReleaseProfile | undefined> {
+    const existing = this.releaseProfiles.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: ReleaseProfileRow = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    };
+    this.releaseProfiles.set(id, updated);
+    return toReleaseProfile(updated);
+  }
+
+  async getCustomFormats(userId: string): Promise<CustomFormat[]> {
+    await this.ensureReleaseScoringDefaults(userId);
+    return Array.from(this.customFormats.values())
+      .filter((format) => format.userId === userId)
+      .map(toCustomFormat);
+  }
+
+  async addCustomFormat(userId: string, format: InsertCustomFormat): Promise<CustomFormat> {
+    const id = randomUUID();
+    const row: CustomFormatRow = {
+      id,
+      userId,
+      name: format.name,
+      description: format.description ?? "",
+      conditionType: format.conditionType,
+      matcherMode: format.matcherMode,
+      matcherValue: format.matcherValue ?? "",
+      score: format.score ?? 0,
+      enabled: format.enabled ?? true,
+      hardReject: format.hardReject ?? false,
+      builtIn: format.builtIn ?? false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.customFormats.set(`${userId}:${id}`, row);
+    return toCustomFormat(row);
+  }
+
+  async updateCustomFormat(
+    userId: string,
+    id: string,
+    updates: UpdateCustomFormat
+  ): Promise<CustomFormat | undefined> {
+    const key = `${userId}:${id}`;
+    const existing = this.customFormats.get(key);
+    if (!existing) return undefined;
+    const updated: CustomFormatRow = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date(),
+    };
+    this.customFormats.set(key, updated);
+    return toCustomFormat(updated);
+  }
+
+  async removeCustomFormat(userId: string, id: string): Promise<boolean> {
+    const existing = this.customFormats.get(`${userId}:${id}`);
+    if (!existing || existing.builtIn) return false;
+    return this.customFormats.delete(`${userId}:${id}`);
   }
 
   async addXrelNotifiedRelease(insert: InsertXrelNotifiedRelease): Promise<XrelNotifiedRelease> {
@@ -1681,8 +1897,9 @@ export class DatabaseStorage implements IStorage {
     const id = randomUUID();
     const [settings] = await db
       .insert(userSettings)
-      .values({ ...insertSettings, id })
+      .values({ ...insertSettings, id, autoSearchEnabled: false, autoDownloadEnabled: false })
       .returning();
+    await this.ensureReleaseScoringDefaults(insertSettings.userId);
     return settings;
   }
 
@@ -1692,10 +1909,153 @@ export class DatabaseStorage implements IStorage {
   ): Promise<UserSettings | undefined> {
     const [updated] = await db
       .update(userSettings)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({
+        ...updates,
+        autoSearchEnabled: false,
+        autoDownloadEnabled: false,
+        updatedAt: new Date(),
+      })
       .where(eq(userSettings.userId, userId))
       .returning();
     return updated || undefined;
+  }
+
+  async ensureReleaseScoringDefaults(userId: string): Promise<void> {
+    const existingProfiles = await db
+      .select()
+      .from(releaseProfiles)
+      .where(eq(releaseProfiles.userId, userId));
+
+    if (existingProfiles.length === 0) {
+      await db.insert(releaseProfiles).values(defaultProfileValues(userId));
+    }
+
+    const existingFormats = await db
+      .select({ id: customFormats.id, matcherValue: customFormats.matcherValue })
+      .from(customFormats)
+      .where(and(eq(customFormats.userId, userId), eq(customFormats.builtIn, true)));
+    const existingIds = new Set(existingFormats.map((format) => format.id));
+    const existingBuiltIns = new Set(existingFormats.map((format) => format.matcherValue));
+
+    const legacySettingsRows = await db
+      .select({
+        preferredReleaseGroups: sql<string | null>`preferred_release_groups`,
+      })
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId));
+    const migratedGroups = parseJsonStringArray(legacySettingsRows[0]?.preferredReleaseGroups);
+
+    const formatRows: CustomFormatRow[] = [];
+    for (const format of DEFAULT_CUSTOM_FORMATS) {
+      if (existingBuiltIns.has(format.matcherValue)) continue;
+      formatRows.push({
+        id: `${userId}-${format.id}`,
+        userId,
+        name: format.name,
+        description: format.description,
+        conditionType: format.conditionType,
+        matcherMode: format.matcherMode,
+        matcherValue: format.matcherValue,
+        score: format.score,
+        enabled: format.enabled,
+        hardReject: format.hardReject,
+        builtIn: format.builtIn,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    for (const group of migratedGroups) {
+      const id = `${userId}-legacy-release-group-${group
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")}`;
+      if (existingIds.has(id)) continue;
+      formatRows.push({
+        id,
+        userId,
+        name: `Release group: ${group}`,
+        description: "Migrated from the old preferred release group setting.",
+        conditionType: "release_group",
+        matcherMode: "exact",
+        matcherValue: group,
+        score: 75,
+        enabled: true,
+        hardReject: false,
+        builtIn: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    if (formatRows.length > 0) {
+      await db.insert(customFormats).values(formatRows).onConflictDoNothing();
+    }
+  }
+
+  async getReleaseProfiles(userId: string): Promise<ReleaseProfile[]> {
+    await this.ensureReleaseScoringDefaults(userId);
+    const rows = await db.select().from(releaseProfiles).where(eq(releaseProfiles.userId, userId));
+    return rows.map(toReleaseProfile);
+  }
+
+  async getDefaultReleaseProfile(userId: string): Promise<ReleaseProfile> {
+    const profiles = await this.getReleaseProfiles(userId);
+    return profiles.find((profile) => profile.id) ?? DEFAULT_RELEASE_PROFILE;
+  }
+
+  async updateReleaseProfile(
+    userId: string,
+    id: string,
+    updates: UpdateReleaseProfile
+  ): Promise<ReleaseProfile | undefined> {
+    const [updated] = await db
+      .update(releaseProfiles)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(and(eq(releaseProfiles.userId, userId), eq(releaseProfiles.id, id)))
+      .returning();
+    return updated ? toReleaseProfile(updated) : undefined;
+  }
+
+  async getCustomFormats(userId: string): Promise<CustomFormat[]> {
+    await this.ensureReleaseScoringDefaults(userId);
+    const rows = await db.select().from(customFormats).where(eq(customFormats.userId, userId));
+    return rows.map(toCustomFormat);
+  }
+
+  async addCustomFormat(userId: string, format: InsertCustomFormat): Promise<CustomFormat> {
+    const id = randomUUID();
+    const [row] = await db
+      .insert(customFormats)
+      .values({ ...format, id, userId, builtIn: false })
+      .returning();
+    return toCustomFormat(row);
+  }
+
+  async updateCustomFormat(
+    userId: string,
+    id: string,
+    updates: UpdateCustomFormat
+  ): Promise<CustomFormat | undefined> {
+    const [updated] = await db
+      .update(customFormats)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(and(eq(customFormats.userId, userId), eq(customFormats.id, id)))
+      .returning();
+    return updated ? toCustomFormat(updated) : undefined;
+  }
+
+  async removeCustomFormat(userId: string, id: string): Promise<boolean> {
+    const deleted = await db
+      .delete(customFormats)
+      .where(
+        and(
+          eq(customFormats.userId, userId),
+          eq(customFormats.id, id),
+          eq(customFormats.builtIn, false)
+        )
+      )
+      .returning({ id: customFormats.id });
+    return deleted.length > 0;
   }
 
   async addXrelNotifiedRelease(insert: InsertXrelNotifiedRelease): Promise<XrelNotifiedRelease> {

@@ -334,13 +334,11 @@ describe("GameDownloadDialog", () => {
       expect(screen.getByText("Health")).toBeInTheDocument();
     });
 
-    // Click on Health sort header
-    // Initial state is Seeders Desc (ArrowDown). Clicking it should toggle to Asc (ArrowUp).
+    // Click on Health sort header. Initial state is Profile Score, so Health becomes Desc.
     const healthHeader = screen.getByText("Health");
     fireEvent.click(healthHeader);
 
-    // Should trigger a re-sort -> Ascending -> ArrowUp
-    expect(screen.getAllByTestId("icon-sort-up").length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("icon-sort-down").length).toBeGreaterThan(0);
   });
 
   it("blacklists a release when clicking 'Blacklist release'", async () => {
@@ -481,10 +479,10 @@ describe("GameDownloadDialog", () => {
   });
   const groupSearchResults = makeSearchResult([skidrowItem, codexItem]);
 
-  it("filters displayed results to preferred groups when filterByPreferredGroups is enabled", async () => {
+  it("does not prefilter displayed results by legacy preferred groups", async () => {
     global.fetch = createFetchMock({
       search: groupSearchResults,
-      settings: { filterByPreferredGroups: true, preferredReleaseGroups: '["SKIDROW"]' },
+      settings: {},
     });
 
     renderComponent();
@@ -496,13 +494,13 @@ describe("GameDownloadDialog", () => {
       { timeout: 3000 }
     );
 
-    expect(screen.queryByText("Test Game CODEX")).toBeNull();
+    expect(screen.getAllByText("Test Game CODEX").length).toBeGreaterThan(0);
   });
 
-  it("shows all results when filterByPreferredGroups is false even if groups are configured", async () => {
+  it("shows all results because release groups are display-only metadata", async () => {
     global.fetch = createFetchMock({
       search: groupSearchResults,
-      settings: { filterByPreferredGroups: false, preferredReleaseGroups: '["SKIDROW"]' },
+      settings: {},
     });
 
     renderComponent();

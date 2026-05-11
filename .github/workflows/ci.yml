@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, release/*]
+    branches: [main, release/*, "codex/**"]
   pull_request:
     branches: [main, release/*]
   # Allow manual trigger

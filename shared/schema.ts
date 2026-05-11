@@ -34,11 +34,55 @@ export const userSettings = sqliteTable("user_settings", {
     .notNull()
     .default(false),
   steamSyncFailures: integer("steam_sync_failures").notNull().default(0),
-  preferredReleaseGroups: text("preferred_release_groups"),
-  filterByPreferredGroups: integer("filter_by_preferred_groups", { mode: "boolean" })
-    .notNull()
-    .default(false),
   preferredPlatform: text("preferred_platform"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
+    sql`(strftime('%s', 'now') * 1000)`
+  ),
+});
+
+export const releaseProfiles = sqliteTable(
+  "release_profiles",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    minScore: integer("min_score").notNull().default(50),
+    preferredPlatform: text("preferred_platform"),
+    protocolPreference: text("protocol_preference").notNull().default("either"),
+    requiredTerms: text("required_terms", { mode: "json" }).$type<string[]>().default([]),
+    ignoredTerms: text("ignored_terms", { mode: "json" }).$type<string[]>().default([]),
+    minSeeders: integer("min_seeders").notNull().default(0),
+    maxSize: integer("max_size"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+      sql`(strftime('%s', 'now') * 1000)`
+    ),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
+      sql`(strftime('%s', 'now') * 1000)`
+    ),
+  },
+  (t) => [uniqueIndex("release_profiles_user_default_idx").on(t.userId, t.isDefault)]
+);
+
+export const customFormats = sqliteTable("custom_formats", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  conditionType: text("condition_type").notNull(),
+  matcherMode: text("matcher_mode").notNull(),
+  matcherValue: text("matcher_value").notNull().default(""),
+  score: integer("score").notNull().default(0),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  hardReject: integer("hard_reject", { mode: "boolean" }).notNull().default(false),
+  builtIn: integer("built_in", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+    sql`(strftime('%s', 'now') * 1000)`
+  ),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(
     sql`(strftime('%s', 'now') * 1000)`
   ),
@@ -322,7 +366,7 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 // Download rules schema for auto-download filtering
 export const downloadRulesSchema = z.object({
   minSeeders: z.number().int().min(0).default(0),
-  sortBy: z.enum(["seeders", "date", "size"]).default("seeders"),
+  sortBy: z.enum(["score", "seeders", "date", "size"]).default("score"),
   visibleCategories: z
     .array(z.enum(["main", "update", "dlc", "extra"]))
     .default(["main", "update", "dlc", "extra"]),
@@ -354,6 +398,33 @@ export const updateUserSettingsSchema = createInsertSchema(userSettings)
     updatedAt: true,
   })
   .partial();
+
+export const releaseProfileSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  minScore: z.number().int().default(50),
+  preferredPlatform: z.string().nullable().optional(),
+  protocolPreference: z.enum(["torrent", "usenet", "either"]).default("either"),
+  requiredTerms: z.array(z.string()).default([]),
+  ignoredTerms: z.array(z.string()).default([]),
+  minSeeders: z.number().int().min(0).default(0),
+  maxSize: z.number().int().min(0).nullable().optional(),
+});
+
+export const updateReleaseProfileSchema = releaseProfileSchema.partial();
+
+export const insertCustomFormatSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  description: z.string().default(""),
+  conditionType: z.enum(["builtin", "title", "release_group", "uploader", "category", "protocol"]),
+  matcherMode: z.enum(["builtin", "contains", "exact", "regex"]),
+  matcherValue: z.string().default(""),
+  score: z.number().int().default(0),
+  enabled: z.boolean().default(true),
+  hardReject: z.boolean().default(false),
+  builtIn: z.boolean().default(false),
+});
+
+export const updateCustomFormatSchema = insertCustomFormatSchema.partial();
 
 export const updatePasswordSchema = z
   .object({
@@ -404,6 +475,12 @@ export type InsertNotification = (typeof insertNotificationSchema)["_output"];
 export type UserSettings = typeof userSettings.$inferSelect;
 export type InsertUserSettings = (typeof insertUserSettingsSchema)["_output"];
 export type UpdateUserSettings = (typeof updateUserSettingsSchema)["_output"];
+export type ReleaseProfileRow = typeof releaseProfiles.$inferSelect;
+export type InsertReleaseProfile = (typeof releaseProfileSchema)["_output"];
+export type UpdateReleaseProfile = (typeof updateReleaseProfileSchema)["_output"];
+export type CustomFormatRow = typeof customFormats.$inferSelect;
+export type InsertCustomFormat = (typeof insertCustomFormatSchema)["_output"];
+export type UpdateCustomFormat = (typeof updateCustomFormatSchema)["_output"];
 
 export interface DownloadSummary {
   topStatus: "downloading" | "paused" | "failed" | "completed";
@@ -492,12 +569,15 @@ export interface SearchResultItem {
   link: string;
   pubDate: string;
   description?: string;
-  category?: string;
+  category?: string[];
   size?: number;
   seeders?: number;
   leechers?: number;
   downloadVolumeFactor?: number;
   uploadVolumeFactor?: number;
+  poster?: string;
+  uploader?: string;
+  group?: string;
   guid?: string;
   comments?: string;
   attributes?: { [key: string]: string };
@@ -505,11 +585,28 @@ export interface SearchResultItem {
   indexerName?: string;
 }
 
+export interface SearchAttemptDiagnostic {
+  indexerName: string;
+  protocol: "torrent" | "usenet";
+  query: string;
+  categories: string[] | null;
+  rawCount: number;
+  keptCount: number;
+  error?: string;
+}
+
+export interface SearchDiagnostics {
+  attempts: SearchAttemptDiagnostic[];
+  totalBeforeBlacklist?: number;
+  blacklistedCount?: number;
+}
+
 export interface SearchResult {
   items: SearchResultItem[];
   total?: number;
   offset?: number;
   errors?: string[];
+  diagnostics?: SearchDiagnostics;
 }
 
 export const rssFeeds = sqliteTable("rss_feeds", {

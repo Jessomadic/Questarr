@@ -92,7 +92,10 @@ function formatDate(dateString: string): string {
 
 export default function SearchPage() {
   const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  });
   const debouncedSearchQuery = useDebounce(searchQuery, 500);
   const [selectedDownload, setSelectedDownload] = useState<DownloadItem | null>(null);
   const [isDownloadDialogOpen, setIsDownloadDialogOpen] = useState(false);

@@ -1,4 +1,8 @@
 import { type Indexer } from "@shared/schema";
+import {
+  categoriesMatchIndexerCategoryRequest,
+  DEFAULT_GAME_CATEGORY_IDS,
+} from "../shared/release-profiles.js";
 import { torznabLogger } from "./logger.js";
 import { safeFetch } from "./ssrf.js";
 import { XMLParser } from "fast-xml-parser";
@@ -17,6 +21,9 @@ interface TorznabItem {
   guid?: string;
   comments?: string;
   attributes?: { [key: string]: string };
+  poster?: string;
+  uploader?: string;
+  group?: string;
   indexerId?: string;
   indexerName?: string;
   indexerUrl?: string;
@@ -25,6 +32,7 @@ interface TorznabItem {
 interface TorznabSearchParams {
   query?: string;
   category?: string[];
+  disableCategoryFilter?: boolean;
   limit?: number;
   offset?: number;
   imdbid?: string;
@@ -91,17 +99,7 @@ export class TorznabClient {
 
         result.items = result.items.filter((item) => {
           if (!item.category) return true;
-          // Note: TorznabItem.category is a string (single category?)
-          // or did I define it as string[]? Interface says string | undefined.
-          // But parsing might put a single value.
-
-          return requestedCats.some((reqCat) => {
-            if (item.category === reqCat) return true;
-            if (reqCat.endsWith("000") && item.category!.startsWith(reqCat.substring(0, 1))) {
-              return true;
-            }
-            return false;
-          });
+          return categoriesMatchIndexerCategoryRequest(item.category.split(","), requestedCats);
         });
 
         if (result.items.length < initialCount) {
@@ -207,7 +205,9 @@ export class TorznabClient {
       url.searchParams.set("q", params.query);
     }
 
-    if (params.category && params.category.length > 0) {
+    if (params.disableCategoryFilter) {
+      // Broad fallback search: omit cat so scoring can decide instead of the indexer.
+    } else if (params.category && params.category.length > 0) {
       url.searchParams.set("cat", params.category.join(","));
     } else {
       // Default to game categories
@@ -228,8 +228,8 @@ export class TorznabClient {
         }
       } else {
         // If NO categories are configured, default to standard Game categories
-        // 4000: PC Games, 1000: Console Games
-        url.searchParams.set("cat", "4000,1000");
+        // Newznab/Torznab game release categories: Console 1000/10xx and PC 4000/40xx.
+        url.searchParams.set("cat", DEFAULT_GAME_CATEGORY_IDS.join(","));
       }
     }
 
@@ -366,7 +366,7 @@ export class TorznabClient {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       attributes.forEach((attr: any) => {
-        const name = attr["@_name"];
+        const name = attr["@_name"] ? String(attr["@_name"]).toLowerCase() : "";
         const value = attr["@_value"];
         if (name && value) {
           parsedAttributes[name] = value;
@@ -394,6 +394,20 @@ export class TorznabClient {
               break;
             case "comments":
               torznabItem.comments = value;
+              break;
+            case "poster":
+            case "author":
+              torznabItem.poster = value;
+              break;
+            case "uploader":
+            case "uploadermail":
+            case "uploaderemail":
+            case "postedby":
+              torznabItem.uploader = value;
+              break;
+            case "group":
+            case "groups":
+              torznabItem.group = value;
               break;
           }
         }

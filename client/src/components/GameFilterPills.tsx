@@ -1,5 +1,5 @@
 import React from "react";
-import { Search, Download, RefreshCw } from "lucide-react";
+import { Search, Download, RefreshCw, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -10,6 +10,8 @@ interface GameFilterPillsProps {
   setShowDownloadsOnly: (value: boolean | ((prev: boolean) => boolean)) => void;
   showUpdateAvailableOnly?: boolean;
   setShowUpdateAvailableOnly?: (value: boolean | ((prev: boolean) => boolean)) => void;
+  showHiddenOnly?: boolean;
+  setShowHiddenOnly?: (value: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 export default function GameFilterPills({
@@ -19,6 +21,8 @@ export default function GameFilterPills({
   setShowDownloadsOnly,
   showUpdateAvailableOnly = false,
   setShowUpdateAvailableOnly,
+  showHiddenOnly = false,
+  setShowHiddenOnly,
 }: Readonly<GameFilterPillsProps>) {
   return (
     <>
@@ -66,6 +70,23 @@ export default function GameFilterPills({
           <TooltipContent>
             {showUpdateAvailableOnly ? "Show all" : "Has update downloads"}
           </TooltipContent>
+        </Tooltip>
+      )}
+      {setShowHiddenOnly && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={showHiddenOnly ? "default" : "outline"}
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setShowHiddenOnly((v) => !v)}
+              aria-label={showHiddenOnly ? "Show visible games" : "Show hidden games only"}
+            >
+              <EyeOff className="h-3 w-3" />
+              Hidden
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{showHiddenOnly ? "Show visible games" : "Hidden games"}</TooltipContent>
         </Tooltip>
       )}
     </>

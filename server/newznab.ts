@@ -1,5 +1,9 @@
 import { XMLParser } from "fast-xml-parser";
 import { type Indexer } from "@shared/schema";
+import {
+  categoriesMatchIndexerCategoryRequest,
+  DEFAULT_GAME_CATEGORY_IDS,
+} from "../shared/release-profiles.js";
 import { routesLogger } from "./logger.js";
 import { isSafeUrl, safeFetch } from "./ssrf.js";
 
@@ -11,6 +15,7 @@ const parser = new XMLParser({
 export interface NewznabSearchParams {
   query: string;
   category?: string[];
+  disableCategoryFilter?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -29,6 +34,7 @@ export interface NewznabResult {
   age?: number; // Age in days
   files?: number; // Number of files in NZB
   poster?: string; // Usenet poster
+  uploader?: string; // Indexer uploader or author when provided
   group?: string; // Usenet newsgroup
 }
 
@@ -43,6 +49,200 @@ export interface NewznabCategory {
   name: string;
 }
 
+export const DEFAULT_NEWZNAB_GAME_CATEGORIES: NewznabCategory[] = [
+  { id: "1000", name: "Console" },
+  { id: "1010", name: "Console > NDS" },
+  { id: "1020", name: "Console > PSP" },
+  { id: "1030", name: "Console > Wii" },
+  { id: "1040", name: "Console > Xbox" },
+  { id: "1050", name: "Console > Xbox 360" },
+  { id: "1060", name: "Console > Wiiware" },
+  { id: "1070", name: "Console > Xbox 360 DLC" },
+  { id: "1080", name: "Console > PlayStation 3" },
+  { id: "1110", name: "Console > Nintendo 3DS" },
+  { id: "1120", name: "Console > PlayStation Vita" },
+  { id: "1130", name: "Console > Wii U" },
+  { id: "1140", name: "Console > Xbox One" },
+  { id: "1180", name: "Console > PlayStation 4" },
+  { id: "4000", name: "PC" },
+  { id: "4010", name: "PC > 0day" },
+  { id: "4020", name: "PC > ISO" },
+  { id: "4030", name: "PC > Mac" },
+  { id: "4050", name: "PC > Games" },
+];
+
+function buildNewznabApiUrl(indexer: Indexer, apiFunction: string): URL {
+  const url = new URL(indexer.url);
+  ensureNewznabApiPath(url);
+  url.searchParams.set("apikey", indexer.apiKey);
+  url.searchParams.set("t", apiFunction);
+  return url;
+}
+
+function ensureNewznabApiPath(url: URL): void {
+  const pathSegments = url.pathname
+    .split("/")
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!pathSegments.includes("api")) {
+    url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
+  }
+}
+
+function removeNewznabApiPath(url: URL): void {
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length > 0 && segments[segments.length - 1].toLowerCase() === "api") {
+    segments.pop();
+    url.pathname = segments.length > 0 ? `/${segments.join("/")}` : "/";
+  }
+}
+
+function setNewznabCommonParams(
+  url: URL,
+  indexer: Indexer,
+  apiFunction: string,
+  includeApiKey: boolean,
+  outputFormat?: "xml" | "json"
+): void {
+  if (includeApiKey) {
+    url.searchParams.set("apikey", indexer.apiKey);
+  } else {
+    url.searchParams.delete("apikey");
+  }
+  url.searchParams.set("t", apiFunction);
+  if (outputFormat) {
+    url.searchParams.set("o", outputFormat);
+  } else {
+    url.searchParams.delete("o");
+  }
+}
+
+function buildNewznabCapsUrlCandidates(indexer: Indexer): URL[] {
+  const candidates: URL[] = [];
+  const seen = new Set<string>();
+
+  const addCandidate = (
+    mutatePath: (url: URL) => void,
+    includeApiKey: boolean,
+    outputFormat?: "xml" | "json"
+  ) => {
+    const candidate = new URL(indexer.url);
+    mutatePath(candidate);
+    setNewznabCommonParams(candidate, indexer, "caps", includeApiKey, outputFormat);
+
+    const key = candidate.toString();
+    if (!seen.has(key)) {
+      candidates.push(candidate);
+      seen.add(key);
+    }
+  };
+
+  addCandidate(ensureNewznabApiPath, true);
+  addCandidate((url) => removeNewznabApiPath(url), true);
+  addCandidate(ensureNewznabApiPath, true, "xml");
+  addCandidate((url) => removeNewznabApiPath(url), true, "xml");
+  addCandidate(ensureNewznabApiPath, false, "xml");
+  addCandidate(ensureNewznabApiPath, true, "json");
+  addCandidate((url) => removeNewznabApiPath(url), true, "json");
+
+  return candidates;
+}
+
+function asArray<T>(value: T | T[] | undefined | null): T[] {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function getField(source: unknown, keys: string[]): unknown {
+  if (!source || typeof source !== "object") return undefined;
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    if (record[key] != null) return record[key];
+  }
+  return undefined;
+}
+
+function parseNewznabCapsPayload(payload: string): unknown {
+  const trimmed = payload.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return JSON.parse(trimmed);
+  }
+
+  return parser.parse(payload);
+}
+
+function getNewznabCapsRoot(payload: string): unknown {
+  const data = parseNewznabCapsPayload(payload);
+
+  return (
+    getField(data, ["caps"]) ?? getField(data, ["response"]) ?? getField(data, ["newznab"]) ?? data
+  );
+}
+
+function getNewznabErrorDescription(root: unknown, payload?: string): string | null {
+  const data = payload ? parseNewznabCapsPayload(payload) : undefined;
+  const error = getField(root, ["error"]) ?? getField(data, ["error"]);
+
+  if (error) {
+    const description =
+      getField(error, ["@_description", "description", "@description"]) ??
+      getField(error, ["@_code", "code", "@code"]) ??
+      "unknown error";
+    return String(description);
+  }
+
+  return null;
+}
+
+function parseNewznabCapsCategories(payload: string): NewznabCategory[] {
+  const data = parseNewznabCapsPayload(payload);
+  const root =
+    getField(data, ["caps"]) ?? getField(data, ["response"]) ?? getField(data, ["newznab"]) ?? data;
+  const errorDescription = getNewznabErrorDescription(root);
+  if (errorDescription) {
+    throw new Error(`Newznab caps error: ${errorDescription}`);
+  }
+
+  const categoriesRoot = getField(root, ["categories"]) ?? getField(data, ["categories"]);
+  const rawCategories = Array.isArray(categoriesRoot)
+    ? categoriesRoot
+    : asArray(getField(categoriesRoot, ["category"]));
+  const categories: NewznabCategory[] = [];
+
+  for (const cat of rawCategories) {
+    const id = getField(cat, ["@_id", "id", "@id"]);
+    const name = getField(cat, ["@_name", "name", "@name", "#text"]);
+    if (id) {
+      categories.push({
+        id: String(id),
+        name: name ? String(name) : `Category ${String(id)}`,
+      });
+    }
+
+    const rawSubcategories = asArray(
+      getField(cat, ["subcat"]) ??
+        getField(getField(cat, ["subcategories"]), ["subcat"]) ??
+        getField(getField(cat, ["categories"]), ["category"])
+    );
+
+    for (const subcat of rawSubcategories) {
+      const subcatId = getField(subcat, ["@_id", "id", "@id"]);
+      const subcatName = getField(subcat, ["@_name", "name", "@name", "#text"]);
+      if (subcatId) {
+        const parentName = name ? String(name) : `Category ${String(id)}`;
+        const childName = subcatName ? String(subcatName) : `Category ${String(subcatId)}`;
+        categories.push({
+          id: String(subcatId),
+          name: `${parentName} > ${childName}`,
+        });
+      }
+    }
+  }
+
+  return categories;
+}
+
 class NewznabClient {
   /**
    * Search a single Newznab indexer
@@ -54,18 +254,12 @@ class NewznabClient {
         throw new Error(`Unsafe URL detected: ${indexer.url}`);
       }
 
-      const url = new URL(indexer.url);
-      // Don't modify pathname if it already contains 'api'
-      if (!url.pathname.includes("/api")) {
-        url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      }
-
-      // Build Newznab search parameters
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "search"); // Newznab search function
+      const url = buildNewznabApiUrl(indexer, "search");
       url.searchParams.set("q", params.query);
 
-      if (params.category && params.category.length > 0) {
+      if (params.disableCategoryFilter) {
+        // Broad fallback search: omit cat so scoring can decide instead of the indexer.
+      } else if (params.category && params.category.length > 0) {
         url.searchParams.set("cat", params.category.join(","));
       } else {
         // Default to game categories
@@ -90,8 +284,8 @@ class NewznabClient {
           }
         } else {
           // If NO categories are configured, default to standard Game categories
-          // 4000: PC Games, 1000: Console Games
-          url.searchParams.set("cat", "4000,1000");
+          // Newznab game release categories: Console 1000/10xx and PC 4000/40xx.
+          url.searchParams.set("cat", DEFAULT_GAME_CATEGORY_IDS.join(","));
         }
       }
 
@@ -147,7 +341,7 @@ class NewznabClient {
 
           for (const attr of attrsArray) {
             if (attr["@_name"] && attr["@_value"]) {
-              attrMap.set(attr["@_name"], attr["@_value"]);
+              attrMap.set(String(attr["@_name"]).toLowerCase(), String(attr["@_value"]));
             }
           }
 
@@ -166,9 +360,17 @@ class NewznabClient {
             const cats = Array.isArray(item.category) ? item.category : [item.category];
             categories.push(...cats.filter(Boolean).map(String));
           }
+          for (const attr of attrsArray) {
+            if (String(attr["@_name"]).toLowerCase() === "category" && attr["@_value"]) {
+              categories.push(String(attr["@_value"]));
+            }
+          }
+          const uniqueCategories = Array.from(
+            new Set(categories.map((category) => category.trim()).filter(Boolean))
+          );
 
           routesLogger.debug(
-            { title: item.title, categories, indexer: indexer.name },
+            { title: item.title, categories: uniqueCategories, indexer: indexer.name },
             "parsed newznab item category"
           );
 
@@ -179,7 +381,7 @@ class NewznabClient {
             publishDate: item.pubDate,
             indexerId: indexer.id,
             indexerName: indexer.name,
-            category: categories,
+            category: uniqueCategories,
             guid: item.guid?.["#text"] || item.guid,
             // Usenet-specific
             grabs: (() => {
@@ -195,8 +397,14 @@ class NewznabClient {
               const num = parseInt(val, 10);
               return !isNaN(num) ? num : undefined;
             })(),
-            poster: attrMap.get("poster"),
-            group: attrMap.get("group"),
+            poster: attrMap.get("poster") || (item.author ? String(item.author) : undefined),
+            uploader:
+              attrMap.get("uploader") ||
+              attrMap.get("uploadermail") ||
+              attrMap.get("uploaderemail") ||
+              attrMap.get("postedby") ||
+              (item.author ? String(item.author) : undefined),
+            group: attrMap.get("group") || attrMap.get("groups"),
           });
         }
       }
@@ -215,22 +423,7 @@ class NewznabClient {
           // If item has no category info, we keep it (conservative approach)
           if (!item.category || item.category.length === 0) return true;
 
-          // Check if any of the item's categories match any of the requested categories
-          return item.category.some((itemCat) =>
-            requestedCats.some((reqCat) => {
-              if (itemCat === reqCat) return true;
-
-              // Handle parent categories (e.g. 4000 matches 4050)
-              // If request is X000 (e.g. 4000), it matches 4xxx
-              if (reqCat.endsWith("000") && itemCat.startsWith(reqCat.substring(0, 1))) {
-                return true;
-              }
-              // If request is XX00 (e.g. 4000), it matches 40xx?
-              // Actually 4000 usually means the whole 4xxx block in Torznab/Newznab.
-
-              return false;
-            })
-          );
+          return categoriesMatchIndexerCategoryRequest(item.category, requestedCats);
         });
 
         if (results.length < initialCount) {
@@ -312,56 +505,50 @@ class NewznabClient {
         throw new Error(`Unsafe URL detected: ${indexer.url}`);
       }
 
-      const url = new URL(indexer.url);
-      url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "caps"); // Get capabilities
+      let lastError: unknown;
 
-      const response = await safeFetch(url.toString(), {
-        signal: AbortSignal.timeout(10000),
-      });
+      for (const url of buildNewznabCapsUrlCandidates(indexer)) {
+        try {
+          const response = await safeFetch(url.toString(), {
+            headers: {
+              Accept: "application/xml,text/xml,application/json,*/*",
+              "User-Agent": "Questarr/1.0",
+            },
+            signal: AbortSignal.timeout(10000),
+          });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const xmlText = await response.text();
-      const data = parser.parse(xmlText);
-
-      const categories: NewznabCategory[] = [];
-
-      if (data.caps?.categories?.category) {
-        const cats = Array.isArray(data.caps.categories.category)
-          ? data.caps.categories.category
-          : [data.caps.categories.category];
-
-        for (const cat of cats) {
-          if (cat["@_id"] && cat["@_name"]) {
-            categories.push({
-              id: cat["@_id"],
-              name: cat["@_name"],
-            });
-
-            // Add subcategories
-            if (cat.subcat) {
-              const subcats = Array.isArray(cat.subcat) ? cat.subcat : [cat.subcat];
-              for (const subcat of subcats) {
-                if (subcat["@_id"] && subcat["@_name"]) {
-                  categories.push({
-                    id: subcat["@_id"],
-                    name: `${cat["@_name"]} > ${subcat["@_name"]}`,
-                  });
-                }
-              }
-            }
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
           }
+
+          const payload = await response.text();
+          const categories = parseNewznabCapsCategories(payload);
+
+          if (categories.length > 0) {
+            return categories;
+          }
+
+          lastError = new Error("caps response did not include categories");
+        } catch (error) {
+          lastError = error;
+          routesLogger.debug(
+            { indexer: indexer.name, url: url.toString(), error },
+            "newznab caps category candidate failed"
+          );
         }
       }
 
-      return categories;
+      routesLogger.warn(
+        { indexer: indexer.name, error: lastError },
+        "newznab caps returned no categories; using default game categories"
+      );
+      return DEFAULT_NEWZNAB_GAME_CATEGORIES;
     } catch (error) {
-      routesLogger.error({ indexer: indexer.name, error }, "failed to get newznab categories");
-      throw error;
+      routesLogger.warn(
+        { indexer: indexer.name, error },
+        "failed to get newznab categories; using default game categories"
+      );
+      return DEFAULT_NEWZNAB_GAME_CATEGORIES;
     }
   }
 
@@ -374,43 +561,54 @@ class NewznabClient {
         return { success: false, message: "Unsafe URL detected" };
       }
 
-      const url = new URL(indexer.url);
-      url.pathname = url.pathname.endsWith("/") ? `${url.pathname}api` : `${url.pathname}/api`;
-      url.searchParams.set("apikey", indexer.apiKey);
-      url.searchParams.set("t", "caps");
+      let lastErrorMessage = "Invalid Newznab response";
 
-      const response = await safeFetch(url.toString(), {
-        signal: AbortSignal.timeout(10000),
-      });
+      for (const url of buildNewznabCapsUrlCandidates(indexer)) {
+        try {
+          const response = await safeFetch(url.toString(), {
+            headers: {
+              Accept: "application/xml,text/xml,application/json,*/*",
+              "User-Agent": "Questarr/1.0",
+            },
+            signal: AbortSignal.timeout(10000),
+          });
 
-      if (!response.ok) {
-        return {
-          success: false,
-          message: `Connection failed: HTTP ${response.status}`,
-        };
-      }
+          if (!response.ok) {
+            lastErrorMessage = `Connection failed: HTTP ${response.status}`;
+            continue;
+          }
 
-      const xmlText = await response.text();
-      const data = parser.parse(xmlText);
+          const payload = await response.text();
+          const root = getNewznabCapsRoot(payload);
+          const errorDescription = getNewznabErrorDescription(root);
 
-      if (data.error) {
-        return {
-          success: false,
-          message: data.error["@_description"] || data.error.description || "Unknown error",
-        };
-      }
+          if (errorDescription) {
+            return {
+              success: false,
+              message: errorDescription,
+            };
+          }
 
-      // Check if it's a valid Newznab response
-      if (data.caps) {
-        return {
-          success: true,
-          message: "Connection successful",
-        };
+          if (
+            getField(root, ["server"]) ||
+            getField(root, ["categories"]) ||
+            getField(root, ["limits"])
+          ) {
+            return {
+              success: true,
+              message: "Connection successful",
+            };
+          }
+
+          lastErrorMessage = "Invalid Newznab response";
+        } catch (error) {
+          lastErrorMessage = error instanceof Error ? error.message : "Unknown error";
+        }
       }
 
       return {
         success: false,
-        message: "Invalid Newznab response",
+        message: lastErrorMessage,
       };
     } catch (error) {
       return {

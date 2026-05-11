@@ -108,7 +108,7 @@ const navigationGroups: NavigationGroup[] = [
     label: "Feeds",
     items: [
       {
-        title: "xREL.to Releases",
+        title: "xREL.to PreDB",
         url: "/xrel",
         icon: Newspaper,
       },
