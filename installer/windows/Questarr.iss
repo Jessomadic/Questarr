@@ -102,22 +102,43 @@ begin
     '$manifestPath = ' + PowerShellSingleQuote(ManifestPath) + #13#10 +
     '$installDir = [System.IO.Path]::GetFullPath(' + PowerShellSingleQuote(InstallDir) + ')' + #13#10 +
     '$outputPath = ' + PowerShellSingleQuote(OutputPath) + #13#10 +
-    '$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json' + #13#10 +
-    '$changed = New-Object System.Collections.Generic.List[string]' + #13#10 +
-    'foreach ($entry in $manifest.files) {' + #13#10 +
+    '$oldManifestPath = Join-Path $installDir ''questarr-install-manifest.json''' + #13#10 +
+    'function Write-AllPayloadChanged { Set-Content -LiteralPath $outputPath -Value ''*'' -Encoding ASCII }' + #13#10 +
+    'function Normalize-QuestarrPath([string]$value) { $value.Replace(''/'', ''\'').ToLowerInvariant() }' + #13#10 +
+    'if (-not (Test-Path -LiteralPath $oldManifestPath -PathType Leaf)) { Write-AllPayloadChanged; exit 0 }' + #13#10 +
+    'try {' + #13#10 +
+    '  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json' + #13#10 +
+    '  $oldManifest = Get-Content -LiteralPath $oldManifestPath -Raw | ConvertFrom-Json' + #13#10 +
+    '} catch {' + #13#10 +
+    '  Write-AllPayloadChanged; exit 0' + #13#10 +
+    '}' + #13#10 +
+    '$newFiles = @($manifest.files)' + #13#10 +
+    '$oldFiles = @{}' + #13#10 +
+    'foreach ($entry in @($oldManifest.files)) {' + #13#10 +
     '  $relative = [string]$entry.path' + #13#10 +
     '  if ([string]::IsNullOrWhiteSpace($relative)) { continue }' + #13#10 +
+    '  $oldFiles[(Normalize-QuestarrPath $relative)] = [pscustomobject]@{ Size = [int64]$entry.size; Sha256 = ([string]$entry.sha256).ToLowerInvariant() }' + #13#10 +
+    '}' + #13#10 +
+    '$changed = New-Object System.Collections.Generic.List[string]' + #13#10 +
+    'foreach ($entry in $newFiles) {' + #13#10 +
+    '  $relative = [string]$entry.path' + #13#10 +
+    '  if ([string]::IsNullOrWhiteSpace($relative)) { continue }' + #13#10 +
+    '  $normalizedPath = Normalize-QuestarrPath $relative' + #13#10 +
+    '  if (-not $oldFiles.ContainsKey($normalizedPath)) { $changed.Add($relative); continue }' + #13#10 +
+    '  $oldEntry = $oldFiles[$normalizedPath]' + #13#10 +
+    '  if ($oldEntry.Size -ne [int64]$entry.size) { $changed.Add($relative); continue }' + #13#10 +
+    '  if ($oldEntry.Sha256 -ne ([string]$entry.sha256).ToLowerInvariant()) { $changed.Add($relative); continue }' + #13#10 +
     '  $relativeForDisk = $relative.Replace(''/'', [System.IO.Path]::DirectorySeparatorChar)' + #13#10 +
     '  $targetPath = Join-Path $installDir $relativeForDisk' + #13#10 +
     '  if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) { $changed.Add($relative); continue }' + #13#10 +
-    '  $file = Get-Item -LiteralPath $targetPath' + #13#10 +
-    '  if ($file.Length -ne [int64]$entry.size) { $changed.Add($relative); continue }' + #13#10 +
-    '  $hash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()' + #13#10 +
-    '  if ($hash -ne ([string]$entry.sha256).ToLowerInvariant()) { $changed.Add($relative); continue }' + #13#10 +
     '}' + #13#10 +
     '$normalized = @($changed | ForEach-Object { $_.Replace(''/'', ''\'').ToLowerInvariant() })' + #13#10 +
-    '$payload = ''|'' + ($normalized -join ''|'') + ''|''' + #13#10 +
-    'Set-Content -LiteralPath $outputPath -Value $payload -Encoding UTF8' + #13#10;
+    'if ($newFiles.Count -gt 0 -and $changed.Count -eq $newFiles.Count) {' + #13#10 +
+    '  $payload = ''*''' + #13#10 +
+    '} else {' + #13#10 +
+    '  $payload = ''|'' + ($normalized -join ''|'') + ''|''' + #13#10 +
+    '}' + #13#10 +
+    'Set-Content -LiteralPath $outputPath -Value $payload -Encoding ASCII' + #13#10;
 
   Log('Building Questarr changed-file list before extraction.');
   if not SaveStringToFile(ScriptPath, Script, False) then
