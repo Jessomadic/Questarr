@@ -569,7 +569,7 @@ export interface SearchResultItem {
   link: string;
   pubDate: string;
   description?: string;
-  category?: string;
+  category?: string[];
   size?: number;
   seeders?: number;
   leechers?: number;
@@ -582,11 +582,28 @@ export interface SearchResultItem {
   indexerName?: string;
 }
 
+export interface SearchAttemptDiagnostic {
+  indexerName: string;
+  protocol: "torrent" | "usenet";
+  query: string;
+  categories: string[] | null;
+  rawCount: number;
+  keptCount: number;
+  error?: string;
+}
+
+export interface SearchDiagnostics {
+  attempts: SearchAttemptDiagnostic[];
+  totalBeforeBlacklist?: number;
+  blacklistedCount?: number;
+}
+
 export interface SearchResult {
   items: SearchResultItem[];
   total?: number;
   offset?: number;
   errors?: string[];
+  diagnostics?: SearchDiagnostics;
 }
 
 export const rssFeeds = sqliteTable("rss_feeds", {

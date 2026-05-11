@@ -74,6 +74,16 @@ describe("TorznabClient — download link rewriting", () => {
     expect(result.items[0].link).toBe(expectedLink);
   });
 
+  it("omits cat when category filtering is disabled", async () => {
+    const indexer = makeIndexer({ categories: ["4000"] });
+    mockFetchResponse(makeTorznabXml("http://indexer.example.com/download/file.torrent"));
+
+    await client.searchGames(indexer, { query: "game", disableCategoryFilter: true });
+
+    const url = new URL(mockSafeFetch.mock.calls[0][0] as string);
+    expect(url.searchParams.get("cat")).toBeNull();
+  });
+
   it("applies standard host rewrite for non-Prowlarr indexers returning an internal URL", async () => {
     const indexer = makeIndexer({ url: "https://my-indexer.com/api" });
     // Indexer returns its internal hostname in the download URL

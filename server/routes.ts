@@ -175,10 +175,11 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
         ])
       : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
 
-    const { items, total, errors } = await searchAllIndexers({
+    const { items, total, errors, diagnostics } = await searchAllIndexers({
       query: query.trim(),
       gameTitle: userOwnsGame ? game.title : query.trim(),
       category: categories,
+      categoryWasExplicit: categories !== undefined,
       limit,
       offset,
       releaseProfile,
@@ -224,6 +225,11 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
       total,
       offset,
       ...(blacklistedCount > 0 ? { blacklistedCount } : {}),
+      diagnostics: {
+        ...diagnostics,
+        totalBeforeBlacklist: total,
+        blacklistedCount,
+      },
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {

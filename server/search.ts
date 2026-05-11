@@ -2,7 +2,11 @@ import { storage } from "./storage.js";
 import { torznabClient } from "./torznab.js";
 import { newznabClient } from "./newznab.js";
 import { searchLogger } from "./logger.js";
-import { parseReleaseMetadata } from "../shared/title-utils.js";
+import {
+  buildSearchQueriesForTitle,
+  normalizeTitle,
+  parseReleaseMetadata,
+} from "../shared/title-utils.js";
 import {
   DEFAULT_RELEASE_PROFILE,
   DEFAULT_CUSTOM_FORMATS,
@@ -11,6 +15,7 @@ import {
   type ReleaseDecision,
   type ReleaseProfile,
 } from "../shared/release-profiles.js";
+import type { Indexer } from "../shared/schema.js";
 
 export interface SearchItem {
   title: string;
@@ -37,10 +42,27 @@ export interface SearchItem {
   releaseDecision?: ReleaseDecision;
 }
 
+export interface SearchAttemptDiagnostic {
+  indexerName: string;
+  protocol: "torrent" | "usenet";
+  query: string;
+  categories: string[] | null;
+  rawCount: number;
+  keptCount: number;
+  error?: string;
+}
+
+export interface SearchDiagnostics {
+  attempts: SearchAttemptDiagnostic[];
+  totalBeforeBlacklist?: number;
+  blacklistedCount?: number;
+}
+
 export interface AggregatedSearchOptions {
   query: string;
   gameTitle?: string;
   category?: string[];
+  categoryWasExplicit?: boolean;
   limit?: number;
   offset?: number;
   releaseProfile?: ReleaseProfile;
@@ -52,141 +74,267 @@ export interface AggregatedSearchResults {
   total: number;
   offset: number;
   errors: string[];
+  diagnostics: SearchDiagnostics;
+}
+
+interface TorznabSearchItem {
+  title: string;
+  link: string;
+  pubDate: string;
+  size?: number;
+  indexerId?: string;
+  indexerName?: string;
+  indexerUrl?: string;
+  category?: string;
+  guid?: string;
+  seeders?: number;
+  leechers?: number;
+  downloadVolumeFactor?: number;
+  uploadVolumeFactor?: number;
+  comments?: string;
+}
+
+interface NewznabSearchItem {
+  title: string;
+  link: string;
+  publishDate: string;
+  size?: number;
+  indexerId: string;
+  indexerName: string;
+  category: string[];
+  guid: string;
+  grabs?: number;
+  age?: number;
+  files?: number;
+  poster?: string;
+  group?: string;
+}
+
+function searchItemSort(a: SearchItem, b: SearchItem): number {
+  const acceptedDelta =
+    Number(b.releaseDecision?.accepted ?? false) - Number(a.releaseDecision?.accepted ?? false);
+  if (acceptedDelta !== 0) return acceptedDelta;
+
+  const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
+  if (scoreDelta !== 0) return scoreDelta;
+
+  const healthA = a.downloadType === "usenet" ? (a.grabs ?? 0) : (a.seeders ?? 0);
+  const healthB = b.downloadType === "usenet" ? (b.grabs ?? 0) : (b.seeders ?? 0);
+  if (healthB !== healthA) return healthB - healthA;
+
+  const dateA = new Date(a.pubDate).getTime();
+  const dateB = new Date(b.pubDate).getTime();
+  return dateB - dateA;
+}
+
+function mapTorznabItem(item: TorznabSearchItem): SearchItem {
+  let comments = item.comments;
+  if (!comments && item.indexerUrl && item.guid) {
+    try {
+      const baseUrl = new URL(item.indexerUrl);
+      const guid = item.guid.split("/").pop() || item.guid;
+      comments = `${baseUrl.protocol}//${baseUrl.host}/details/${guid}`;
+    } catch (error) {
+      searchLogger.warn(
+        { error, indexerUrl: item.indexerUrl, guid: item.guid },
+        "Failed to construct comments URL from indexer URL and GUID"
+      );
+    }
+  }
+
+  return {
+    title: item.title,
+    link: item.link,
+    pubDate: item.pubDate,
+    size: item.size,
+    indexerId: item.indexerId || "unknown",
+    indexerName: item.indexerName || "unknown",
+    indexerUrl: item.indexerUrl,
+    category: item.category ? item.category.split(",").map((category) => category.trim()) : [],
+    guid: item.guid || item.link,
+    downloadType: "torrent",
+    seeders: item.seeders,
+    leechers: item.leechers,
+    downloadVolumeFactor: item.downloadVolumeFactor,
+    uploadVolumeFactor: item.uploadVolumeFactor,
+    group: parseReleaseMetadata(item.title).group,
+    comments,
+  };
+}
+
+function mapNewznabItem(item: NewznabSearchItem): SearchItem {
+  return {
+    title: item.title,
+    link: item.link,
+    pubDate: item.publishDate,
+    size: item.size,
+    indexerId: item.indexerId,
+    indexerName: item.indexerName,
+    category: item.category,
+    guid: item.guid,
+    downloadType: "usenet",
+    grabs: item.grabs,
+    age: item.age,
+    files: item.files,
+    poster: item.poster,
+    group: item.group,
+  };
+}
+
+function dedupeKey(item: SearchItem): string {
+  if (item.guid) return `guid:${item.guid}`;
+  if (item.link) return `link:${item.link}`;
+  return `title:${item.indexerName}:${normalizeTitle(item.title)}`;
+}
+
+function dedupeSearchItems(items: SearchItem[]): SearchItem[] {
+  const seen = new Set<string>();
+  const deduped: SearchItem[] = [];
+  for (const item of items) {
+    const key = dedupeKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+function attemptCategoriesLabel(
+  indexer: Indexer,
+  category: string[] | undefined,
+  disableCategoryFilter: boolean
+): string[] | null {
+  if (disableCategoryFilter) return null;
+  if (category && category.length > 0) return category;
+  return indexer.categories?.length ? indexer.categories : ["default-games"];
+}
+
+async function runTorznabAttempt(
+  indexer: Indexer,
+  query: string,
+  category: string[] | undefined,
+  disableCategoryFilter: boolean,
+  limit: number
+): Promise<{ items: SearchItem[]; errors: string[]; diagnostic: SearchAttemptDiagnostic }> {
+  const response = await torznabClient.searchMultipleIndexers([indexer], {
+    query,
+    category,
+    disableCategoryFilter,
+    limit,
+    offset: 0,
+  });
+  const items = response.results.items.map((item) => mapTorznabItem(item as TorznabSearchItem));
+  const error = response.errors?.join("; ") || undefined;
+  return {
+    items,
+    errors: response.errors ?? [],
+    diagnostic: {
+      indexerName: indexer.name,
+      protocol: "torrent",
+      query,
+      categories: attemptCategoriesLabel(indexer, category, disableCategoryFilter),
+      rawCount: response.results.total ?? response.results.items.length,
+      keptCount: items.length,
+      ...(error ? { error } : {}),
+    },
+  };
+}
+
+async function runNewznabAttempt(
+  indexer: Indexer,
+  query: string,
+  category: string[] | undefined,
+  disableCategoryFilter: boolean,
+  limit: number
+): Promise<{ items: SearchItem[]; errors: string[]; diagnostic: SearchAttemptDiagnostic }> {
+  const response = await newznabClient.searchMultipleIndexers([indexer], {
+    query,
+    category,
+    disableCategoryFilter,
+    limit,
+    offset: 0,
+  });
+  const items = response.results.items.map((item) => mapNewznabItem(item as NewznabSearchItem));
+  const errors = response.errors?.map((error) => `${error.indexer}: ${error.error}`) ?? [];
+  const error = errors.join("; ") || undefined;
+  return {
+    items,
+    errors,
+    diagnostic: {
+      indexerName: indexer.name,
+      protocol: "usenet",
+      query,
+      categories: attemptCategoriesLabel(indexer, category, disableCategoryFilter),
+      rawCount: response.results.total ?? response.results.items.length,
+      keptCount: items.length,
+      ...(error ? { error } : {}),
+    },
+  };
+}
+
+async function searchIndexerWithFallbacks(
+  indexer: Indexer,
+  options: AggregatedSearchOptions,
+  attemptLimit: number
+): Promise<{ items: SearchItem[]; errors: string[]; diagnostics: SearchAttemptDiagnostic[] }> {
+  const queryAttempts = buildSearchQueriesForTitle(options.query);
+  const categoryWasExplicit = options.categoryWasExplicit ?? options.category !== undefined;
+  const allDiagnostics: SearchAttemptDiagnostic[] = [];
+  const allErrors: string[] = [];
+
+  for (const query of queryAttempts) {
+    const runAttempt = indexer.protocol === "newznab" ? runNewznabAttempt : runTorznabAttempt;
+    const scoped = await runAttempt(indexer, query, options.category, false, attemptLimit);
+    allDiagnostics.push(scoped.diagnostic);
+    allErrors.push(...scoped.errors);
+    if (scoped.items.length > 0) {
+      return { items: scoped.items, errors: allErrors, diagnostics: allDiagnostics };
+    }
+    if (scoped.errors.length > 0) {
+      return { items: [], errors: allErrors, diagnostics: allDiagnostics };
+    }
+
+    if (!categoryWasExplicit) {
+      const broad = await runAttempt(indexer, query, undefined, true, attemptLimit);
+      allDiagnostics.push(broad.diagnostic);
+      allErrors.push(...broad.errors);
+      if (broad.items.length > 0) {
+        return { items: broad.items, errors: allErrors, diagnostics: allDiagnostics };
+      }
+      if (broad.errors.length > 0) {
+        return { items: [], errors: allErrors, diagnostics: allDiagnostics };
+      }
+    }
+  }
+
+  return { items: [], errors: allErrors, diagnostics: allDiagnostics };
 }
 
 export async function searchAllIndexers(
   options: AggregatedSearchOptions
 ): Promise<AggregatedSearchResults> {
   const enabledIndexers = await storage.getEnabledIndexers();
+  const offset = options.offset || 0;
+  const limit = options.limit || 50;
+  const attemptLimit = Math.min(100, offset + limit);
 
   if (enabledIndexers.length === 0) {
-    return { items: [], total: 0, offset: options.offset || 0, errors: ["No indexers configured"] };
+    return {
+      items: [],
+      total: 0,
+      offset,
+      errors: ["No indexers configured"],
+      diagnostics: { attempts: [] },
+    };
   }
 
-  const torznabIndexers = enabledIndexers.filter((i) => i.protocol !== "newznab");
-  const newznabIndexers = enabledIndexers.filter((i) => i.protocol === "newznab");
+  const results = await Promise.all(
+    enabledIndexers.map((indexer) => searchIndexerWithFallbacks(indexer, options, attemptLimit))
+  );
 
-  const searchParams = {
-    query: options.query,
-    category: options.category,
-    limit: options.limit || 50,
-    offset: options.offset || 0,
-  };
-
-  const promises = [];
-
-  if (torznabIndexers.length > 0) {
-    promises.push(
-      torznabClient
-        .searchMultipleIndexers(torznabIndexers, searchParams)
-        .then((res) => ({ type: "torznab" as const, ...res }))
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          searchLogger.error({ error: message }, "torznab client failed");
-          return {
-            type: "torznab" as const,
-            results: { items: [], total: 0, offset: 0 },
-            errors: [message],
-          };
-        })
-    );
-  }
-
-  if (newznabIndexers.length > 0) {
-    promises.push(
-      newznabClient
-        .searchMultipleIndexers(newznabIndexers, searchParams)
-        .then((res) => ({ type: "newznab" as const, ...res }))
-        .catch((err: unknown) => {
-          const message = err instanceof Error ? err.message : String(err);
-          searchLogger.error({ error: message }, "newznab client failed");
-          return {
-            type: "newznab" as const,
-            results: { items: [], total: 0, offset: 0 },
-            errors: [{ indexer: "newznab", error: message }],
-          };
-        })
-    );
-  }
-
-  const results = await Promise.all(promises);
-
-  const combinedItems: SearchItem[] = [];
-  const combinedErrors: string[] = [];
-  let totalCount = 0;
-
-  for (const result of results) {
-    if (result.type === "torznab") {
-      const items = result.results.items.map((item) => {
-        // Construct comments URL if not provided by the indexer.
-        // This is a best-effort fallback based on common torrent indexer URL patterns.
-        // Indexers should ideally provide the comments field directly in their Torznab responses
-        // for more reliable links to the torrent page. The '/details/{guid}' pattern is a heuristic
-        // that works for many popular indexers but may not work for all.
-        let comments = item.comments;
-        if (!comments && item.indexerUrl && item.guid) {
-          try {
-            const baseUrl = new URL(item.indexerUrl);
-            const guid = item.guid.split("/").pop() || item.guid;
-            comments = `${baseUrl.protocol}//${baseUrl.host}/details/${guid}`;
-          } catch (error) {
-            // If URL construction fails, log the error for debugging but continue
-            searchLogger.warn(
-              { error, indexerUrl: item.indexerUrl, guid: item.guid },
-              "Failed to construct comments URL from indexer URL and GUID"
-            );
-          }
-        }
-
-        return {
-          title: item.title,
-          link: item.link,
-          pubDate: item.pubDate,
-          size: item.size,
-          indexerId: item.indexerId || "unknown",
-          indexerName: item.indexerName || "unknown",
-          indexerUrl: item.indexerUrl,
-          category: item.category ? item.category.split(",") : [],
-          guid: item.guid || item.link,
-          downloadType: "torrent" as const,
-          seeders: item.seeders,
-          leechers: item.leechers,
-          downloadVolumeFactor: item.downloadVolumeFactor,
-          uploadVolumeFactor: item.uploadVolumeFactor,
-          group: parseReleaseMetadata(item.title).group,
-          comments,
-        } as SearchItem;
-      });
-      combinedItems.push(...items);
-      totalCount += result.results.total || 0;
-      if (result.errors) combinedErrors.push(...result.errors);
-    } else if (result.type === "newznab") {
-      const items = result.results.items.map(
-        (item) =>
-          ({
-            title: item.title,
-            link: item.link,
-            pubDate: item.publishDate,
-            size: item.size,
-            indexerId: item.indexerId,
-            indexerName: item.indexerName,
-            category: item.category,
-            guid: item.guid,
-            downloadType: "usenet" as const,
-            grabs: item.grabs,
-            age: item.age,
-            files: item.files,
-            poster: item.poster,
-            group: item.group,
-          }) as SearchItem
-      );
-      combinedItems.push(...items);
-      totalCount += result.results.total || 0;
-      if (result.errors) {
-        combinedErrors.push(...result.errors.map((e) => `${e.indexer}: ${e.error}`));
-      }
-    }
-  }
+  const combinedItems = dedupeSearchItems(results.flatMap((result) => result.items));
+  const combinedErrors = Array.from(new Set(results.flatMap((result) => result.errors)));
+  const diagnostics = results.flatMap((result) => result.diagnostics);
 
   for (const item of combinedItems) {
     item.releaseDecision = evaluateRelease(
@@ -207,30 +355,14 @@ export async function searchAllIndexers(
     );
   }
 
-  // Default sort: release decision, health, then date. This keeps likely game releases above
-  // category drift and non-game media, especially for broad Newznab search responses.
-  combinedItems.sort((a, b) => {
-    const acceptedDelta =
-      Number(b.releaseDecision?.accepted ?? false) - Number(a.releaseDecision?.accepted ?? false);
-    if (acceptedDelta !== 0) return acceptedDelta;
-
-    const scoreDelta = (b.releaseDecision?.score ?? 0) - (a.releaseDecision?.score ?? 0);
-    if (scoreDelta !== 0) return scoreDelta;
-
-    const healthA = a.downloadType === "usenet" ? (a.grabs ?? 0) : (a.seeders ?? 0);
-    const healthB = b.downloadType === "usenet" ? (b.grabs ?? 0) : (b.seeders ?? 0);
-    if (healthB !== healthA) return healthB - healthA;
-
-    const dateA = new Date(a.pubDate).getTime();
-    const dateB = new Date(b.pubDate).getTime();
-    return dateB - dateA;
-  });
+  combinedItems.sort(searchItemSort);
 
   return {
-    items: combinedItems,
-    total: totalCount,
-    offset: options.offset || 0,
+    items: combinedItems.slice(offset, offset + limit),
+    total: combinedItems.length,
+    offset,
     errors: combinedErrors,
+    diagnostics: { attempts: diagnostics },
   };
 }
 

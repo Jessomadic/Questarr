@@ -12,6 +12,7 @@ const parser = new XMLParser({
 export interface NewznabSearchParams {
   query: string;
   category?: string[];
+  disableCategoryFilter?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -247,7 +248,9 @@ class NewznabClient {
       const url = buildNewznabApiUrl(indexer, "search");
       url.searchParams.set("q", params.query);
 
-      if (params.category && params.category.length > 0) {
+      if (params.disableCategoryFilter) {
+        // Broad fallback search: omit cat so scoring can decide instead of the indexer.
+      } else if (params.category && params.category.length > 0) {
         url.searchParams.set("cat", params.category.join(","));
       } else {
         // Default to game categories

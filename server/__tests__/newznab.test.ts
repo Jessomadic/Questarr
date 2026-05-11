@@ -178,6 +178,22 @@ describe("NewznabClient", () => {
         "HTTP 500: Server Error"
       );
     });
+
+    it("should omit cat when category filtering is disabled", async () => {
+      (isSafeUrl as Mock).mockResolvedValue(true);
+      (safeFetch as Mock).mockResolvedValue({
+        ok: true,
+        text: async () => mockSearchXml,
+      });
+
+      await newznabClient.search(mockIndexer, {
+        query: "test",
+        disableCategoryFilter: true,
+      });
+
+      const url = new URL((safeFetch as Mock).mock.calls[0][0] as string);
+      expect(url.searchParams.get("cat")).toBeNull();
+    });
   });
 
   describe("getCategories", () => {

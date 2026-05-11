@@ -26,6 +26,7 @@ interface TorznabItem {
 interface TorznabSearchParams {
   query?: string;
   category?: string[];
+  disableCategoryFilter?: boolean;
   limit?: number;
   offset?: number;
   imdbid?: string;
@@ -198,7 +199,9 @@ export class TorznabClient {
       url.searchParams.set("q", params.query);
     }
 
-    if (params.category && params.category.length > 0) {
+    if (params.disableCategoryFilter) {
+      // Broad fallback search: omit cat so scoring can decide instead of the indexer.
+    } else if (params.category && params.category.length > 0) {
       url.searchParams.set("cat", params.category.join(","));
     } else {
       // Default to game categories
