@@ -1,7 +1,7 @@
 // src/lib/versionService.ts
 export async function fetchLatestQuestarrVersion(): Promise<string | null> {
   try {
-    const res = await fetch("https://api.github.com/repos/Doezer/Questarr/releases/latest", {
+    const res = await fetch("https://api.github.com/repos/Jessomadic/Questarr/releases/latest", {
       headers: {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",

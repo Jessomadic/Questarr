@@ -31,6 +31,7 @@ const RssPage = lazy(() => import("@/pages/rss"));
 const LoginPage = lazy(() => import("@/pages/auth/login"));
 const SetupPage = lazy(() => import("@/pages/auth/setup"));
 const StatsPage = lazy(() => import("@/pages/stats"));
+const SystemStatusPage = lazy(() => import("@/pages/system-status"));
 
 function Router() {
   return (
@@ -54,7 +55,7 @@ function Router() {
         <Route path="/settings/download-clients" component={DownloadersPage} />
         <Route path="/settings/connect" component={ArrPlaceholderPage} />
         <Route path="/settings" component={SettingsPage} />
-        <Route path="/system/status" component={ArrPlaceholderPage} />
+        <Route path="/system/status" component={SystemStatusPage} />
         <Route path="/system/tasks" component={ArrPlaceholderPage} />
         <Route path="/system/logs" component={ArrPlaceholderPage} />
         <Route path="/library" component={LibraryPage} />

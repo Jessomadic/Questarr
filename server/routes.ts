@@ -96,10 +96,16 @@ import archiver from "archiver";
 import helmet from "helmet";
 import { steamRoutes } from "./steam-routes.js";
 import { pcgamingwikiRouter } from "./pcgamingwiki-router.js";
+import { checkForUpdate, downloadUpdate, installUpdate } from "./updater.js";
 
 // Cache-Control header values for IGDB discovery endpoints
 const CC_IGDB_GAME_LIST = "public, max-age=3600, stale-while-revalidate=600";
 const CC_IGDB_METADATA = "public, max-age=86400, stale-while-revalidate=3600";
+
+const updateRequestSchema = z.object({
+  channel: z.enum(["stable", "prerelease"]).optional(),
+  tagName: z.string().trim().min(1).max(128).optional(),
+});
 
 // ⚡ Bolt: Simple in-memory cache implementation to avoid external dependencies
 // Caches storage info for 30 seconds to prevent spamming downloaders
@@ -459,6 +465,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // For readiness checks (e.g., database connectivity), use the /api/ready endpoint.
     res.status(200).json({ status: "ok" });
   });
+
+  app.get("/api/system/updates", authenticateToken, async (req, res) => {
+    try {
+      const parsed = updateRequestSchema.parse({
+        channel: req.query.channel,
+        tagName: req.query.tagName,
+      });
+      const result = await checkForUpdate(parsed);
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid update request", details: error.errors });
+      }
+
+      routesLogger.error({ error }, "Failed to check for updates");
+      res.status(500).json({ error: "Failed to check for updates" });
+    }
+  });
+
+  app.post(
+    "/api/system/updates/download",
+    authenticateToken,
+    sensitiveEndpointLimiter,
+    async (req, res) => {
+      try {
+        const parsed = updateRequestSchema.parse(req.body ?? {});
+        const result = await downloadUpdate(parsed);
+        res.json(result);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: "Invalid update request", details: error.errors });
+        }
+
+        routesLogger.error({ error }, "Failed to download update");
+        res.status(500).json({
+          error: error instanceof Error ? error.message : "Failed to download update",
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/api/system/updates/install",
+    authenticateToken,
+    sensitiveEndpointLimiter,
+    async (req, res) => {
+      try {
+        const parsed = updateRequestSchema.parse(req.body ?? {});
+        const result = await installUpdate(parsed);
+        res.json(result);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: "Invalid update request", details: error.errors });
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Failed to start the silent installer";
+        routesLogger.error({ error }, "Failed to start silent update");
+        res
+          .status(message.includes("only supported on Windows") ? 409 : 500)
+          .json({ error: message });
+      }
+    }
+  );
 
   // SSL Settings - Get
   app.get("/api/settings/ssl", authenticateToken, async (req, res) => {
