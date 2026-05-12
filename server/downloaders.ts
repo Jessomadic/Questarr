@@ -15,11 +15,12 @@ import { isSafeUrl, safeFetch } from "./ssrf.js";
 const DOWNLOAD_CLIENT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
 
-// Prowlarr (and some Newznab/Torznab indexers) use standard base64 in the `link` query
-// parameter, which can contain `+`. HTTP servers like ASP.NET Core decode `+`
-// as space in query strings, corrupting the base64 and producing "Invalid link"
-// errors. Re-encode literal `+` as `%2B` before fetching.
-// This applies to both NZB (Newznab) and torrent (Torznab) indexer download URLs.
+// Prowlarr (and some Newznab/Torznab indexers) wrap external download URLs in a proxy
+// URL whose `link` query parameter is a standard base64 value that can contain `+`.
+// ASP.NET Core (Prowlarr's backend) decodes `+` as space in query strings, corrupting
+// the base64 and producing "Invalid link" errors. Re-encode `+` as `%2B` in the `link`
+// parameter only — other parameters may legitimately use `+` to represent a space
+// (e.g. `file=my+game.torrent`), and converting those would break the 400-retry path.
 function fixNzbUrlEncoding(rawUrl: string): string {
   const qIdx = rawUrl.indexOf("?");
   if (qIdx === -1) return rawUrl;
@@ -30,6 +31,7 @@ function fixNzbUrlEncoding(rawUrl: string): string {
     .map((part) => {
       const eq = part.indexOf("=");
       if (eq === -1) return part;
+      if (part.slice(0, eq) !== "link") return part;
       return part.slice(0, eq + 1) + part.slice(eq + 1).replace(/\+/g, "%2B");
     })
     .join("&");

@@ -91,12 +91,14 @@ describe("Magnet Detection and Redirect Handling in QBittorrentClient", () => {
       headersMap: {},
     });
 
-  it("should apply fixNzbUrlEncoding to convert + to %2B before fetching", async () => {
-    // When an indexer URL contains `+` in a base64 `link` parameter (Prowlarr proxy),
-    // Questarr re-encodes `+` as `%2B` before passing the URL to qBittorrent or fetching
-    // it directly.  This prevents ASP.NET Core (Prowlarr) from mis-decoding `+` as space.
-    const urlWithPlus = "http://indexer.com/download?file=my+game.torrent";
-    const urlWithEncodedPlus = "http://indexer.com/download?file=my%2Bgame.torrent";
+  it("should apply fixNzbUrlEncoding to convert + to %2B in the link parameter before fetching", async () => {
+    // Prowlarr proxy URLs carry the real download URL in a base64 `link` query parameter.
+    // ASP.NET Core decodes `+` as space, so literal `+` in that base64 must be re-encoded
+    // as `%2B`. Only the `link` parameter is fixed; other parameters are left as-is so that
+    // `+`-as-space semantics remain intact and the 400-retry path stays functional.
+    const urlWithPlus = "http://prowlarr.local:9696/1/download?apikey=secret&link=abc+def+ghi";
+    const urlWithEncodedPlus =
+      "http://prowlarr.local:9696/1/download?apikey=secret&link=abc%2Bdef%2Bghi";
 
     fetchMock
       // 1. Auth
