@@ -175,6 +175,7 @@ export default function RssSettings() {
                       onClick={() => deleteFeedMutation.mutate(feed.id)}
                       className="text-destructive"
                       aria-label={`Delete feed ${feed.name}`}
+                      disabled={deleteFeedMutation.isPending}
                     >
                       <Trash className="h-4 w-4" aria-hidden="true" />
                     </Button>
