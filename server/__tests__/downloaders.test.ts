@@ -458,5 +458,25 @@ describe("QBittorrentClient", () => {
       // Check if cookie was used in second request
       expect(fetchMock.mock.calls[1][1].headers.Cookie).toContain("SID=abc12345");
     });
+
+    it("should authenticate and set QBT_SID cookie", async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        text: async () => "Ok.",
+        headers: {
+          getSetCookie: () => ["QBT_SID_20080=abc12345; HttpOnly; Path=/"],
+          get: () => "QBT_SID_20080=abc12345; HttpOnly; Path=/",
+        },
+      });
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        text: async () => "v5.2.0",
+      });
+
+      const result = await client.testConnection();
+      expect(result.success).toBe(true);
+      expect(fetchMock.mock.calls[1][1].headers.Cookie).toContain("QBT_SID_20080=abc12345");
+    });
   });
 });

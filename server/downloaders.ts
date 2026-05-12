@@ -2844,38 +2844,40 @@ export class QBittorrentClient implements DownloaderClient {
       // Extract ALL cookies from response
       // In Node.js fetch, set-cookie can be retrieved differently
       const setCookieHeaders = response.headers.getSetCookie?.() || [];
-      let sidCookie = null;
+      let sessionCookie: string | null = null;
 
       // Try the newer getSetCookie() method first (Node 19.7+)
       if (setCookieHeaders.length > 0) {
         for (const cookie of setCookieHeaders) {
-          const match = cookie.match(/SID=([^;]+)/);
+          const match = cookie.match(/((?:QBT_)?SID(?:_[^=;]+)?)=([^;]+)/);
           if (match) {
-            sidCookie = match[1];
+            sessionCookie = `${match[1]}=${match[2]}`;
             break;
           }
         }
       }
 
       // Fallback to get("set-cookie") for older Node versions
-      if (!sidCookie) {
+      if (!sessionCookie) {
         const setCookie = response.headers.get("set-cookie");
         if (setCookie) {
-          const match = setCookie.match(/SID=([^;]+)/);
+          const match = setCookie.match(/((?:QBT_)?SID(?:_[^=;]+)?)=([^;]+)/);
           if (match) {
-            sidCookie = match[1];
+            sessionCookie = `${match[1]}=${match[2]}`;
           }
         }
       }
 
-      if (sidCookie) {
-        this.cookie = `SID=${sidCookie}`;
+      if (sessionCookie) {
+        this.cookie = sessionCookie;
         downloadersLogger.debug(
           { cookieLength: this.cookie.length },
           "qBittorrent authentication successful with cookie"
         );
       } else {
-        downloadersLogger.warn("qBittorrent authentication returned Ok but no SID cookie found");
+        downloadersLogger.warn(
+          "qBittorrent authentication returned Ok but no SID-compatible cookie found"
+        );
         // Some qBittorrent configs don't require cookies, so this might be okay
         this.cookie = null;
       }
