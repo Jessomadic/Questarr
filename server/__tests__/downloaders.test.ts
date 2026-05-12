@@ -23,22 +23,18 @@ vi.mock("parse-torrent", () => ({
   default: vi.fn().mockResolvedValue({ infoHash: "abc123def456abc123def456abc123def456abc1" }),
 }));
 
-describe("TransmissionClient", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-  let client: TransmissionClient;
+const mockTimestamp = new Date("2024-01-01T00:00:00.000Z");
 
-  const mockDownloader: Downloader = {
-    id: "trans-1",
-    name: "Test Transmission",
-    type: "transmission",
-    url: "http://transmission:9091",
+function createMockDownloader(
+  overrides: Pick<Downloader, "id" | "name" | "type" | "url" | "port"> & Partial<Downloader>
+): Downloader {
+  return {
     enabled: true,
     priority: 1,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    port: 9091,
+    createdAt: mockTimestamp,
+    updatedAt: mockTimestamp,
     useSsl: false,
-    urlPath: "/transmission/rpc",
+    urlPath: null,
     username: "user",
     password: "password",
     category: null,
@@ -49,13 +45,32 @@ describe("TransmissionClient", () => {
     removeCompleted: false,
     postImportCategory: null,
     settings: null,
+    ...overrides,
   };
+}
+
+function setupClientTest<T>(createClient: () => T) {
+  vi.clearAllMocks();
+  const fetchMock = vi.fn();
+  global.fetch = fetchMock as unknown as typeof fetch;
+  return { fetchMock, client: createClient() };
+}
+
+describe("TransmissionClient", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let client: TransmissionClient;
+
+  const mockDownloader = createMockDownloader({
+    id: "trans-1",
+    name: "Test Transmission",
+    type: "transmission",
+    url: "http://transmission:9091",
+    port: 9091,
+    urlPath: "/transmission/rpc",
+  });
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    fetchMock = vi.fn();
-    global.fetch = fetchMock as unknown as typeof fetch;
-    client = new TransmissionClient(mockDownloader);
+    ({ fetchMock, client } = setupClientTest(() => new TransmissionClient(mockDownloader)));
   });
 
   describe("testConnection", () => {
@@ -255,36 +270,17 @@ describe("RTorrentClient", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let client: RTorrentClient;
 
-  // Fully populated mock downloader to satisfy type requirements
-  const mockDownloader: Downloader = {
+  const mockDownloader = createMockDownloader({
     id: "rtorrent-1",
     name: "Test rTorrent",
     type: "rtorrent",
     url: "http://rtorrent:8080",
-    enabled: true,
-    priority: 1,
-    createdAt: new Date(),
-    updatedAt: new Date(),
     port: 8080,
-    useSsl: false,
     urlPath: "/RPC2",
-    username: "user",
-    password: "password",
-    category: null,
-    downloadDir: null,
-    downloadPath: "/downloads",
-    label: "tv",
-    addStopped: false,
-    removeCompleted: false,
-    postImportCategory: null,
-    settings: null,
-  };
+  });
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    fetchMock = vi.fn();
-    global.fetch = fetchMock as unknown as typeof fetch;
-    client = new RTorrentClient(mockDownloader);
+    ({ fetchMock, client } = setupClientTest(() => new RTorrentClient(mockDownloader)));
   });
 
   describe("testConnection", () => {
@@ -403,35 +399,18 @@ describe("QBittorrentClient", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
   let client: QBittorrentClient;
 
-  const mockDownloader: Downloader = {
+  const mockDownloader = createMockDownloader({
     id: "qbit-1",
     name: "Test access",
     type: "qbittorrent",
     url: "http://qbittorrent:8080",
-    enabled: true,
-    priority: 1,
-    createdAt: new Date(),
-    updatedAt: new Date(),
     port: 8080,
-    useSsl: false,
-    urlPath: null,
     username: "admin",
     password: "adminadmin",
-    category: null,
-    downloadDir: null,
-    downloadPath: "/downloads",
-    label: "tv",
-    addStopped: false,
-    removeCompleted: false,
-    postImportCategory: null,
-    settings: null,
-  };
+  });
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    fetchMock = vi.fn();
-    global.fetch = fetchMock as unknown as typeof fetch;
-    client = new QBittorrentClient(mockDownloader);
+    ({ fetchMock, client } = setupClientTest(() => new QBittorrentClient(mockDownloader)));
   });
 
   describe("authenticate", () => {

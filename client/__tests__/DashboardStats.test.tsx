@@ -72,7 +72,9 @@ describe("Dashboard Stats Calculation", () => {
       </QueryClientProvider>
     );
 
-    // Verify it rendered successfully by checking if a title is present
-    expect(screen.getByText("Recent Additions")).toBeDefined();
+    expect(screen.getByText("My Library")).toBeDefined();
+    expect(screen.getByText("wanted")).toBeDefined();
+    expect(screen.getByText("owned")).toBeDefined();
+    expect(screen.getByText("⭐", { exact: false })).toBeDefined();
   });
 });
