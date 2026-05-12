@@ -77,6 +77,7 @@ export interface ReleaseDecision {
   releaseCategory: DownloadCategory;
   titleMatch: ReleaseTitleMatch;
   sizeDeltaPercent?: number;
+  xrelMatchedRelease?: string;
 }
 
 export interface EvaluateReleaseInput {
@@ -93,6 +94,7 @@ export interface EvaluateReleaseInput {
   uploader?: string;
   preferredPlatform?: string | null;
   expectedSize?: number;
+  xrelTrustedReleaseTitles?: string[];
 }
 
 type ScoreAccumulator = Pick<ReleaseDecision, "matchedFormats"> & { score: number };
@@ -304,6 +306,18 @@ export const DEFAULT_CUSTOM_FORMATS: CustomFormat[] = [
     builtIn: true,
   },
   {
+    id: "xrel-predb-match",
+    name: "xREL PreDB match",
+    description: "The release name exactly matches a game release listed in xREL PreDB metadata.",
+    conditionType: "builtin",
+    matcherMode: "builtin",
+    matcherValue: "xrel-predb-match",
+    score: 125,
+    enabled: true,
+    hardReject: false,
+    builtIn: true,
+  },
+  {
     id: "non-game-media",
     name: "Non-game media",
     description:
@@ -392,6 +406,14 @@ function getFormat(formats: CustomFormat[], customFormatId: string): CustomForma
   );
 }
 
+function hasFormatDefinition(formats: CustomFormat[], customFormatId: string): boolean {
+  return formats.some(
+    (candidate) =>
+      candidate.id === customFormatId ||
+      (candidate.conditionType === "builtin" && candidate.matcherValue === customFormatId)
+  );
+}
+
 function addScore(
   decision: ScoreAccumulator,
   formats: CustomFormat[],
@@ -412,6 +434,7 @@ function addScoreOrFallback(
   fallbackScore: number
 ): void {
   if (addScore(decision, formats, customFormatId)) return;
+  if (hasFormatDefinition(formats, customFormatId)) return;
   decision.score += fallbackScore;
   decision.matchedFormats.push(fallbackName);
 }
@@ -422,6 +445,18 @@ function getSizeDeltaPercent(
 ): number | undefined {
   if (size == null || expectedSize == null || size <= 0 || expectedSize <= 0) return undefined;
   return (Math.abs(size - expectedSize) / expectedSize) * 100;
+}
+
+function findXrelTrustedReleaseMatch(
+  title: string,
+  trustedReleaseTitles: string[] | undefined
+): string | undefined {
+  if (!trustedReleaseTitles?.length) return undefined;
+  const normalizedTitle = normalizeTitle(title);
+  if (!normalizedTitle) return undefined;
+  return trustedReleaseTitles.find(
+    (trustedTitle) => normalizeTitle(trustedTitle) === normalizedTitle
+  );
 }
 
 const GAME_CATEGORY_LABEL_PATTERN = /\b(?:game|games)\b/i;
@@ -588,6 +623,10 @@ export function evaluateRelease(
   const categories = input.category ?? [];
   const profilePlatform = input.preferredPlatform ?? profile.preferredPlatform;
   const sizeDeltaPercent = getSizeDeltaPercent(input.size, input.expectedSize);
+  const xrelMatchedRelease = findXrelTrustedReleaseMatch(
+    input.title,
+    input.xrelTrustedReleaseTitles
+  );
   const rejectionReasons: string[] = [];
   const decision = {
     score: 0,
@@ -603,6 +642,10 @@ export function evaluateRelease(
   } else {
     decision.score -= 100;
     rejectionReasons.push("Release title does not match the game title");
+  }
+
+  if (xrelMatchedRelease) {
+    addScoreOrFallback(decision, formats, "xrel-predb-match", "xREL PreDB match", 125);
   }
 
   if (hasGameCategory(categories)) addScore(decision, formats, "newznab-games-category");
@@ -726,5 +769,6 @@ export function evaluateRelease(
     releaseCategory,
     titleMatch,
     ...(sizeDeltaPercent != null ? { sizeDeltaPercent } : {}),
+    ...(xrelMatchedRelease ? { xrelMatchedRelease } : {}),
   };
 }

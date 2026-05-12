@@ -13,6 +13,7 @@ import { rssService } from "../rss.js";
 import { comparePassword } from "../auth.js";
 import { db } from "../db.js";
 import { prowlarrClient } from "../prowlarr.js";
+import { xrelClient } from "../xrel.js";
 
 // Use vi.hoisted to create the mock object
 const { mockConfig } = vi.hoisted(() => {
@@ -1767,6 +1768,37 @@ describe("API Routes - Extended Coverage", () => {
 
   // ─── Search with blacklist filtering ───
   describe("GET /api/search - blacklist filtering", () => {
+    it("should pass xREL PreDB release names into the shared search scorer", async () => {
+      vi.mocked(xrelClient.searchReleases).mockResolvedValue([
+        {
+          id: "xrel-1",
+          dirname: "Test.Game-CODEX",
+          link_href: "https://www.xrel.to/release/1.html",
+          time: 1,
+          group_name: "CODEX",
+          source: "scene",
+        },
+      ]);
+      vi.mocked(searchAllIndexers).mockResolvedValue({
+        items: [],
+        total: 0,
+        errors: [],
+        diagnostics: { attempts: [] },
+      });
+
+      const response = await request(app).get("/api/search?query=Test+Game");
+
+      expect(response.status).toBe(200);
+      expect(searchAllIndexers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: "Test Game",
+          gameTitle: "Test Game",
+          xrelTrustedReleaseTitles: ["Test.Game-CODEX"],
+        })
+      );
+      expect(response.body.diagnostics.xrelTrustedReleaseCount).toBe(1);
+    });
+
     it("should filter blacklisted releases when gameId belongs to user", async () => {
       const mockGame = { id: "game-1", userId: "user-1", title: "Test Game" };
       vi.mocked(storage.getGame).mockResolvedValue(mockGame as any);

@@ -120,6 +120,48 @@ const storageCache = {
   ttl: 30 * 1000, // 30 seconds in milliseconds
 };
 
+const XREL_SCORING_CACHE_TTL_MS = 10 * 60 * 1000;
+const xrelScoringCache = new Map<
+  string,
+  { expiresAt: number; value: Promise<{ titles: string[]; error?: string }> }
+>();
+
+function uniqueReleaseTitles(releases: XrelReleaseListItem[]): string[] {
+  return Array.from(
+    new Set(
+      releases
+        .filter((release) => !release.flags?.nuke_rls)
+        .map((release) => release.dirname)
+        .filter(Boolean)
+    )
+  );
+}
+
+async function getXrelTrustedReleaseTitlesForScoring(
+  query: string,
+  baseUrl: string
+): Promise<{ titles: string[]; error?: string }> {
+  const trimmed = query.trim();
+  if (!trimmed) return { titles: [] };
+
+  const cacheKey = `${baseUrl}|${normalizeTitle(trimmed)}`;
+  const now = Date.now();
+  const cached = xrelScoringCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const value = xrelClient
+    .searchReleases(trimmed, { scene: true, p2p: true, limit: 100, baseUrl })
+    .then((releases) => ({ titles: uniqueReleaseTitles(releases) }))
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Unknown xREL lookup error";
+      routesLogger.warn({ error, query: trimmed }, "xREL PreDB scoring lookup failed");
+      return { titles: [], error: message };
+    });
+
+  xrelScoringCache.set(cacheKey, { expiresAt: now + XREL_SCORING_CACHE_TTL_MS, value });
+  return value;
+}
+
 // Helper to parse category query param which might be string, array, or comma-separated
 export function parseCategories(input: unknown): string[] | undefined {
   if (!input) return undefined;
@@ -293,16 +335,22 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
     const userId = req.user?.id;
     const game = gameId ? await storage.getGame(gameId) : undefined;
     const userOwnsGame = !!game && !!userId && game.userId === userId;
+    const searchTitle = userOwnsGame ? game.title : query.trim();
     const [releaseProfile, customFormats] = userId
       ? await Promise.all([
           storage.getDefaultReleaseProfile?.(userId) ?? DEFAULT_RELEASE_PROFILE,
           storage.getCustomFormats?.(userId) ?? DEFAULT_CUSTOM_FORMATS,
         ])
       : [DEFAULT_RELEASE_PROFILE, DEFAULT_CUSTOM_FORMATS];
+    const xrelBaseUrl =
+      (await storage.getSystemConfig("xrel_api_base"))?.trim() ||
+      process.env.XREL_API_BASE ||
+      DEFAULT_XREL_BASE;
+    const xrelTrust = await getXrelTrustedReleaseTitlesForScoring(searchTitle, xrelBaseUrl);
 
     const { items, total, errors, diagnostics } = await searchAllIndexers({
       query: query.trim(),
-      gameTitle: userOwnsGame ? game.title : query.trim(),
+      gameTitle: searchTitle,
       category: categories,
       categoryWasExplicit: categories !== undefined,
       limit,
@@ -311,6 +359,7 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
         expectedSize != null && Number.isFinite(expectedSize) && expectedSize > 0
           ? expectedSize
           : undefined,
+      xrelTrustedReleaseTitles: xrelTrust.titles,
       releaseProfile,
       customFormats,
     });
@@ -358,6 +407,8 @@ async function handleAggregatedIndexerSearch(req: Request, res: Response) {
         ...diagnostics,
         totalBeforeBlacklist: total,
         blacklistedCount,
+        xrelTrustedReleaseCount: xrelTrust.titles.length,
+        ...(xrelTrust.error ? { xrelError: xrelTrust.error } : {}),
       },
       errors: errors.length > 0 ? errors : undefined,
     });
@@ -2137,6 +2188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       group: z.string().optional(),
       preferredPlatform: z.string().nullable().optional(),
       expectedSize: z.number().positive().optional(),
+      xrelTrustedReleaseTitles: z.array(z.string()).optional(),
     });
 
     const parsed = schema.safeParse(req.body);

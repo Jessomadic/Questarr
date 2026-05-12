@@ -599,6 +599,8 @@ export interface SearchDiagnostics {
   attempts: SearchAttemptDiagnostic[];
   totalBeforeBlacklist?: number;
   blacklistedCount?: number;
+  xrelTrustedReleaseCount?: number;
+  xrelError?: string;
 }
 
 export interface SearchResult {

@@ -57,6 +57,8 @@ export interface SearchDiagnostics {
   attempts: SearchAttemptDiagnostic[];
   totalBeforeBlacklist?: number;
   blacklistedCount?: number;
+  xrelTrustedReleaseCount?: number;
+  xrelError?: string;
 }
 
 export interface AggregatedSearchOptions {
@@ -69,6 +71,7 @@ export interface AggregatedSearchOptions {
   releaseProfile?: ReleaseProfile;
   customFormats?: CustomFormat[];
   expectedSize?: number;
+  xrelTrustedReleaseTitles?: string[];
 }
 
 export interface AggregatedSearchResults {
@@ -360,6 +363,7 @@ export async function searchAllIndexers(
         uploader: item.uploader,
         group: item.group,
         expectedSize: options.expectedSize,
+        xrelTrustedReleaseTitles: options.xrelTrustedReleaseTitles,
         preferredPlatform:
           options.releaseProfile?.preferredPlatform ?? DEFAULT_RELEASE_PROFILE.preferredPlatform,
       },
@@ -375,7 +379,12 @@ export async function searchAllIndexers(
     total: combinedItems.length,
     offset,
     errors: combinedErrors,
-    diagnostics: { attempts: diagnostics },
+    diagnostics: {
+      attempts: diagnostics,
+      ...(options.xrelTrustedReleaseTitles
+        ? { xrelTrustedReleaseCount: options.xrelTrustedReleaseTitles.length }
+        : {}),
+    },
   };
 }
 

@@ -260,6 +260,42 @@ describe("release profile evaluation", () => {
     );
   });
 
+  it("boosts exact xREL PreDB release-name matches", () => {
+    const base = evaluateRelease({
+      title: "Test.Game-CODEX",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      grabs: 10,
+    });
+    const boosted = evaluateRelease({
+      title: "Test.Game-CODEX",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      grabs: 10,
+      xrelTrustedReleaseTitles: ["Test.Game-CODEX"],
+    });
+
+    expect(boosted.score).toBe(base.score + 125);
+    expect(boosted.matchedFormats).toContain("xREL PreDB match");
+    expect(boosted.xrelMatchedRelease).toBe("Test.Game-CODEX");
+  });
+
+  it("does not boost non-exact xREL PreDB release-name matches", () => {
+    const decision = evaluateRelease({
+      title: "Test.Game.Update-CODEX",
+      gameTitle: "Test Game",
+      category: ["4050"],
+      downloadType: "usenet",
+      grabs: 10,
+      xrelTrustedReleaseTitles: ["Test.Game-CODEX"],
+    });
+
+    expect(decision.matchedFormats).not.toContain("xREL PreDB match");
+    expect(decision.xrelMatchedRelease).toBeUndefined();
+  });
+
   it("allows uploader custom formats to match poster emails", () => {
     const decision = evaluateRelease(
       {

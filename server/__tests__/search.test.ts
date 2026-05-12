@@ -320,6 +320,46 @@ describe("Search Module - searchAllIndexers", () => {
     expect(result.items[1].releaseDecision?.matchedFormats).toContain("Expected size mismatch");
   });
 
+  it("should sort exact xREL PreDB matches above otherwise healthier results", async () => {
+    vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeNewznabIndexer()]);
+    vi.mocked(newznabClient.searchMultipleIndexers).mockResolvedValue(
+      makeNewznabResponse([
+        {
+          title: "Test Game PC-RANDOM",
+          link: "http://usenet.example.com/random",
+          publishDate: "2024-01-02T00:00:00Z",
+          size: 2000000,
+          grabs: 100,
+          category: ["4050"],
+          guid: "guid-random",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+        {
+          title: "Test.Game.PC-CODEX",
+          link: "http://usenet.example.com/codex",
+          publishDate: "2024-01-01T00:00:00Z",
+          size: 2000000,
+          grabs: 5,
+          category: ["4050"],
+          guid: "guid-codex",
+          indexerId: "newznab-1",
+          indexerName: "Newznab Indexer",
+        },
+      ])
+    );
+
+    const result = await searchAllIndexers({
+      query: "test game",
+      xrelTrustedReleaseTitles: ["Test.Game.PC-CODEX"],
+    });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0].title).toBe("Test.Game.PC-CODEX");
+    expect(result.items[0].releaseDecision?.matchedFormats).toContain("xREL PreDB match");
+    expect(result.diagnostics.xrelTrustedReleaseCount).toBe(1);
+  });
+
   it("should aggregate errors from indexers", async () => {
     vi.mocked(storage.getEnabledIndexers).mockResolvedValue([makeTorznabIndexer()]);
     vi.mocked(torznabClient.searchMultipleIndexers).mockResolvedValue(

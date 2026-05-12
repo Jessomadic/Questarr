@@ -1246,6 +1246,12 @@ export default function GameDownloadDialog({ game, open, onOpenChange }: GameDow
                                                       %
                                                     </div>
                                                   )}
+                                                  {download.releaseDecision.xrelMatchedRelease && (
+                                                    <div>
+                                                      xREL:{" "}
+                                                      {download.releaseDecision.xrelMatchedRelease}
+                                                    </div>
+                                                  )}
                                                   {download.releaseDecision.rejectionReasons
                                                     .length > 0 && (
                                                     <div>
