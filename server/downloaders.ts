@@ -3397,7 +3397,7 @@ export class SABnzbdClient implements DownloaderClient {
       });
 
       if (options.body) {
-        req.write(options.body as string);
+        req.write(options.body as Buffer | string);
       }
       req.end();
     });
@@ -3456,16 +3456,23 @@ export class SABnzbdClient implements DownloaderClient {
         priority: (request.priority || 0).toString(),
       });
 
-      const formData = new FormData();
-      formData.append(
-        "name",
-        new Blob([nzbContent], { type: "application/x-nzb" }),
-        `${request.title}.nzb`
-      );
+      // Build multipart body manually so fetchInsecure (self-signed HTTPS fallback)
+      // can write it as a Buffer — FormData is not serialisable via req.write().
+      const boundary = `questarr${Date.now().toString(16)}`;
+      const safeName = request.title.replace(/["\\]/g, "_");
+      const nzbBuffer = Buffer.from(nzbContent);
+      const multipartBody = Buffer.concat([
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="name"; filename="${safeName}.nzb"\r\nContent-Type: application/x-nzb\r\n\r\n`
+        ),
+        nzbBuffer,
+        Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]);
 
       const response = await this.fetchWithFallback(url, {
         method: "POST",
-        body: formData,
+        body: multipartBody,
+        headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
         signal: AbortSignal.timeout(30000),
       });
 
