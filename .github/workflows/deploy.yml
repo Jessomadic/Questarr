@@ -31,10 +31,10 @@ on:
   schedule:
     - cron: "0 0 * * *"
 
-  # Trigger on release/1.4.0 branch for dev release
+  # Trigger on main branch for dev release
   push:
     branches:
-      - "release/1.4.0"
+      - "main"
 
 permissions:
   contents: read
