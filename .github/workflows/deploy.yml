@@ -66,8 +66,8 @@ jobs:
             echo "ENVIRONMENT=dev" >> $GITHUB_ENV
             echo "environment=dev" >> $GITHUB_OUTPUT
           else
-            echo "ENVIRONMENT=$INPUT_ENVIRONMENT" >> $GITHUB_ENV
-            echo "environment=$INPUT_ENVIRONMENT" >> $GITHUB_OUTPUT
+            echo "ENVIRONMENT=${INPUT_ENVIRONMENT:-dev}" >> $GITHUB_ENV
+            echo "environment=${INPUT_ENVIRONMENT:-dev}" >> $GITHUB_OUTPUT
           fi
 
           # Normalize repository name to lowercase and strip owner for Docker Hub
