@@ -124,7 +124,7 @@ function deduplicateByTitle(
 ): SearchItem[] {
   const seen = new Map<string, SearchItem>();
   for (const item of items) {
-    const key = normalizeTitle(item.title);
+    const key = `${normalizeTitle(item.title)}:${item.downloadType}`;
     const existing = seen.get(key);
     if (!existing) {
       seen.set(key, item);

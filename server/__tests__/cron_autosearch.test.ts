@@ -1025,7 +1025,11 @@ describe("Cron - checkAutoSearch", () => {
 
     it("should not de-duplicate releases with different titles", async () => {
       // SKIDROW and CODEX are genuinely different releases → 2 items → multiple notification.
-      const settings = { ...baseSettings, autoDownloadEnabled: false, notifyMultipleDownloads: true };
+      const settings = {
+        ...baseSettings,
+        autoDownloadEnabled: false,
+        notifyMultipleDownloads: true,
+      };
 
       mockGetUserSettings.mockResolvedValue(settings);
       mockGetEnabledIndexers.mockResolvedValue([{ id: "indexer-a", priority: 1 }]);
